@@ -225,6 +225,7 @@ impl<S: PointingDriver> PointingDevice<S> {
 
         Some(PointingEvent {
             device_id: self.id,
+            buttons: 0,
             axes: [
                 AxisEvent {
                     typ: AxisValType::Rel,
@@ -617,6 +618,8 @@ pub struct PointingProcessor<'a> {
     last_activity_report: Option<Instant>,
     /// When the last motion event arrived, to log stalls in the stream.
     last_event: Option<Instant>,
+    /// Device-originated button state from the last processed event
+    device_buttons: u8,
 }
 
 /// A pause between motion events longer than this is logged at debug level:
@@ -641,6 +644,7 @@ impl<'a> PointingProcessor<'a> {
             #[cfg(feature = "_ble")]
             last_activity_report: None,
             last_event: None,
+            device_buttons: 0,
         }
     }
 
@@ -713,7 +717,9 @@ impl<'a> PointingProcessor<'a> {
             (x, y) = (y, x);
         }
 
-        let buttons = self.keymap.mouse_buttons();
+        let device_buttons_changed = event.buttons != self.device_buttons;
+        self.device_buttons = event.buttons;
+        let buttons = self.keymap.mouse_buttons() | event.buttons;
         match self.current_mode {
             PointingMode::Cursor(_) | PointingMode::Scroll(_) | PointingMode::Sniper(_) => {
                 // modes that generate mouse reports
@@ -742,7 +748,7 @@ impl<'a> PointingProcessor<'a> {
                             (scroll_config.multiplier_x, scroll_config.divisor_x),
                             (scroll_config.multiplier_y, scroll_config.divisor_y),
                         );
-                        if sx == 0 && sy == 0 {
+                        if sx == 0 && sy == 0 && !device_buttons_changed {
                             return;
                         }
                         // Sensor X → pan, sensor Y → wheel.
@@ -771,7 +777,7 @@ impl<'a> PointingProcessor<'a> {
                             (sniper_config.multiplier, sniper_config.divisor),
                             (sniper_config.multiplier, sniper_config.divisor),
                         );
-                        if sx == 0 && sy == 0 {
+                        if sx == 0 && sy == 0 && !device_buttons_changed {
                             return;
                         }
                         let (x, unsent_x) = fit_axis(if sniper_config.invert_x { -sx } else { sx });
