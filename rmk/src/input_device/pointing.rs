@@ -547,7 +547,7 @@ impl<'a> PointingProcessor<'a> {
             #[cfg(feature = "_ble")]
             last_activity_report: None,
             last_event: None,
-                    last_device: None,
+            last_device: None,
             #[cfg(feature = "rynk")]
             runtime_layer: keymap.active_layer(),
             #[cfg(feature = "rynk")]
@@ -817,7 +817,10 @@ impl<'a> PointingProcessor<'a> {
         if self.current_mode == mode {
             return;
         }
-        debug!("PointingProcessor {}: setting mode to {:?}", self.config.device_id, mode);
+        debug!(
+            "PointingProcessor {}: setting mode to {:?}",
+            self.config.device_id, mode
+        );
         let release_latch = self.latched_buttons() != 0;
         self.set_pointing_mode(mode);
         self.accumulator = MotionAccumulator::default();
