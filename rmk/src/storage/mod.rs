@@ -6,11 +6,11 @@ use embassy_time::Duration;
 use embedded_storage::nor_flash::NorFlash;
 use embedded_storage_async::nor_flash::NorFlash as AsyncNorFlash;
 use postcard::experimental::max_size::MaxSize;
+use rmk_types::auto_mouse::AutoMouseLayerConfig as RuntimeAutoMouseLayerConfig;
 use rmk_types::connection::ConnectionType;
 use rmk_types::morse::MorseProfile;
-use rmk_types::protocol::rynk::BehaviorOptions;
 #[cfg(feature = "rynk")]
-use rmk_types::protocol::rynk::PointingConfig;
+use rmk_types::protocol::rynk::{BehaviorOptions, PointingConfig};
 use sequential_storage::Error as SSError;
 use sequential_storage::cache::Cache;
 use sequential_storage::cache::key_pointers::ArrayKeyPointers;
@@ -156,8 +156,10 @@ pub(crate) enum FlashOperationMessage {
         idx: u8,
         profile: MorseProfile,
     },
-    #[cfg(feature = "host")]
+    #[cfg(feature = "rynk")]
     BehaviorOptions(BehaviorOptions),
+    #[cfg(feature = "host")]
+    AutoMouseLayerConfigs(heapless::Vec<RuntimeAutoMouseLayerConfig, { crate::AUTO_MOUSE_LAYER_MAX_NUM }>),
     // Current saved connection type
     ConnectionType(ConnectionType),
     // Timeout time for combos
@@ -236,6 +238,8 @@ pub(crate) enum StorageKey {
     MorseProfile(u8),
     #[cfg(feature = "host")]
     BehaviorOptions,
+    #[cfg(feature = "host")]
+    AutoMouseLayerConfigs,
 }
 
 impl StorageKey {
@@ -329,6 +333,8 @@ pub(crate) enum StorageData {
     MorseProfile(MorseProfile),
     #[cfg(feature = "host")]
     BehaviorOptions(StoredBehaviorOptions),
+    #[cfg(feature = "host")]
+    AutoMouseLayerConfigs(heapless::Vec<RuntimeAutoMouseLayerConfig, { crate::AUTO_MOUSE_LAYER_MAX_NUM }>),
 }
 
 impl<'a> PostcardValue<'a> for StorageData {}
@@ -376,6 +382,7 @@ pub(crate) struct StoredBehaviorOptions {
     pub(crate) morse_enable_flow_tap: bool,
 }
 
+#[cfg(feature = "rynk")]
 impl From<BehaviorOptions> for StoredBehaviorOptions {
     fn from(options: BehaviorOptions) -> Self {
         Self {
@@ -401,6 +408,28 @@ impl From<&config::BehaviorConfig> for StoredBehaviorOptions {
             morse_enable_flow_tap: behavior.morse.enable_flow_tap,
         }
     }
+}
+
+fn auto_mouse_layer_configs(
+    behavior: &config::BehaviorConfig,
+) -> heapless::Vec<RuntimeAutoMouseLayerConfig, { crate::AUTO_MOUSE_LAYER_MAX_NUM }> {
+    if let Some(configs) = &behavior.runtime_auto_mouse_layer {
+        return configs.clone();
+    }
+    behavior
+        .auto_mouse_layer
+        .iter()
+        .map(|config| RuntimeAutoMouseLayerConfig {
+            device_id: config.device_id,
+            target_layer: config.target_layer,
+            timeout_ms: config.timeout.as_millis() as u32,
+            threshold: config.threshold,
+            deactivate_on_key: config.deactivate_on_key,
+            extra_mouse_keys: config.extra_mouse_keys.iter().copied().collect(),
+            reset_timeout_on_key: config.reset_timeout_on_key,
+            exclude_layers: RuntimeAutoMouseLayerConfig::exclude_layers_mask(config.exclude_layers),
+        })
+        .collect()
 }
 
 impl From<LocalStorageConfig> for StorageData {
@@ -757,6 +786,15 @@ impl<F: AsyncNorFlash, const ROW: usize, const COL: usize, const NUM_LAYER: usiz
             behavior_config.morse.enable_flow_tap = options.morse_enable_flow_tap;
         }
 
+        let read_data = self
+            .flash
+            .fetch_item(&mut self.buffer, &StorageKey::AutoMouseLayerConfigs)
+            .await
+            .map_err(|e| print_storage_error::<F>(e))?;
+        if let Some(StorageData::AutoMouseLayerConfigs(configs)) = read_data {
+            behavior_config.runtime_auto_mouse_layer = Some(configs);
+        }
+
         Ok(())
     }
 
@@ -796,6 +834,13 @@ impl<F: AsyncNorFlash, const ROW: usize, const COL: usize, const NUM_LAYER: usiz
         self.store_data(
             StorageKey::BehaviorOptions,
             &StorageData::BehaviorOptions(behavior.into()),
+        )
+        .await
+        .map_err(|e| print_storage_error::<F>(e))?;
+        #[cfg(feature = "host")]
+        self.store_data(
+            StorageKey::AutoMouseLayerConfigs,
+            &StorageData::AutoMouseLayerConfigs(auto_mouse_layer_configs(behavior)),
         )
         .await
         .map_err(|e| print_storage_error::<F>(e))?;
@@ -852,6 +897,11 @@ impl<F: AsyncNorFlash, const ROW: usize, const COL: usize, const NUM_LAYER: usiz
         self.store_data(
             StorageKey::BehaviorOptions,
             &StorageData::BehaviorOptions(behavior.into()),
+        )
+        .await?;
+        self.store_data(
+            StorageKey::AutoMouseLayerConfigs,
+            &StorageData::AutoMouseLayerConfigs(auto_mouse_layer_configs(behavior)),
         )
         .await?;
 
@@ -1091,11 +1141,19 @@ impl<F: AsyncNorFlash, const ROW: usize, const COL: usize, const NUM_LAYER: usiz
                     )
                     .await
                 }
-                #[cfg(feature = "host")]
+                #[cfg(feature = "rynk")]
                 FlashOperationMessage::BehaviorOptions(options) => {
                     self.store_data(
                         StorageKey::BehaviorOptions,
                         &StorageData::BehaviorOptions(options.into()),
+                    )
+                    .await
+                }
+                #[cfg(feature = "host")]
+                FlashOperationMessage::AutoMouseLayerConfigs(configs) => {
+                    self.store_data(
+                        StorageKey::AutoMouseLayerConfigs,
+                        &StorageData::AutoMouseLayerConfigs(configs),
                     )
                     .await
                 }
