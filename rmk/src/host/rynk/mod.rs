@@ -66,7 +66,8 @@ impl<'a> RynkService<'a> {
             | Cmd::SetComboBulk
             | Cmd::SetMorseBulk
             | Cmd::SetMorseProfile
-            | Cmd::SetMorseProfileBulk => self.lock_config.write_requires_unlock,
+            | Cmd::SetMorseProfileBulk
+            | Cmd::SetBehaviorOptions => self.lock_config.write_requires_unlock,
             _ => false,
         }
     }
@@ -122,6 +123,8 @@ impl<'a> RynkService<'a> {
 
             Cmd::GetBehaviorConfig => serve::<command::GetBehaviorConfig, _>(self, msg).await,
             Cmd::SetBehaviorConfig => serve::<command::SetBehaviorConfig, _>(self, msg).await,
+            Cmd::GetBehaviorOptions => serve::<command::GetBehaviorOptions, _>(self, msg).await,
+            Cmd::SetBehaviorOptions => serve::<command::SetBehaviorOptions, _>(self, msg).await,
 
             Cmd::GetPointingConfig => serve::<command::GetPointingConfig, _>(self, msg).await,
             Cmd::SetPointingConfig => serve::<command::SetPointingConfig, _>(self, msg).await,
