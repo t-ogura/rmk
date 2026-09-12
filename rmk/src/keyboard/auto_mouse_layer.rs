@@ -103,6 +103,17 @@ impl<'a, 'k> AutoMouseLayerRunner<'a, 'k> {
         if !is_cursor_motion(&event, self.entries[idx].config.threshold) {
             return;
         }
+        // A layer that already drives the pointing device -- a scroll layer, say
+        // -- would otherwise have this layer stacked on top of it the moment the
+        // user moves, silently replacing its keymap.
+        if self.entries[idx]
+            .config
+            .exclude_layers
+            .iter()
+            .any(|&layer| self.keymap.is_layer_active(layer))
+        {
+            return;
+        }
         let target_layer = self.entries[idx].config.target_layer;
         let activated_by_us = self.keymap.activate_layer_if_inactive(target_layer);
         if pointing_step(&mut self.entries, idx, Instant::now(), activated_by_us) == PointingOutcome::OverlapFirstSeen {
@@ -402,6 +413,7 @@ mod tests {
                 target_layer: 0,
                 timeout: embassy_time::Duration::from_millis(100),
                 threshold: 1,
+                exclude_layers: &[],
                 deactivate_on_key: false,
                 extra_mouse_keys: &[],
                 reset_timeout_on_key: false,

@@ -234,6 +234,9 @@ target_layer = 3
 timeout = "600ms"
 # Minimum absolute X/Y delta counted as motion, defaults to 1
 threshold = 2
+# Layers that suppress this entry -- while one of them is active, motion does not
+# activate target_layer. Use for layers that already drive the pointing device
+exclude_layers = []
 # Deactivate the layer on any non-mouse key press; requires [event.action] subs >= 1
 deactivate_on_key = false
 # Keys that don't deactivate the layer when deactivate_on_key is set

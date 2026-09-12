@@ -79,16 +79,20 @@ const RESET_DELAY_MS: u64 = 2;
 const PROBE_RETRIES: u8 = 10;
 const PROBE_RETRY_DELAY_MS: u64 = 100;
 
-/// NCS falling edge to the first SCK edge.
-const T_NCS_SCLK_NS: u64 = 120;
-/// Address byte to the first data bit of a read.
-const T_SRAD_US: u64 = 2;
-/// Last SCK falling edge to NCS rising, for a read.
-const T_SCLK_NCS_R_NS: u64 = 120;
-/// Last SCK falling edge to NCS rising, for a write.
-const T_SCLK_NCS_W_US: u64 = 5;
-/// NCS rising edge to the next command.
-const T_SWX_US: u64 = 5;
+// There are deliberately no per-transaction delay constants here.
+//
+// The datasheet's NCS/SCLK setup and hold times are all well under a
+// microsecond, and `BitBangSpiBus` already spends roughly that long on a single
+// bit, so a bit-banged transfer meets them by construction. The Zephyr driver
+// this is ported from inserts no delays either -- it issues the whole motion
+// read as one uninterrupted SPI transfer.
+//
+// Adding them back would be actively harmful rather than merely redundant:
+// `Timer::after` is an await point, and on a 32768 Hz tick it rounds any
+// sub-tick duration up to 30-60 us. A read with delays between its bytes hands
+// the executor several such windows *while CS is still asserted*, so a BLE or
+// USB task can stretch one motion read past the sensor's next frame. The
+// deltas then saturate and the cursor moves in steps.
 
 // Resolution constants: the register takes `cpi / RES_STEP`, valid 16..=127.
 const RES_STEP: u16 = 38;
@@ -178,36 +182,26 @@ impl<SPI: SpiBus, CS: OutputPin, MOTION: InputPin + Wait> Paw3222<SPI, CS, MOTIO
 
     async fn read_reg(&mut self, addr: u8) -> Result<u8, Paw3222Error> {
         let _ = self.cs.set_low();
-        Timer::after(Duration::from_nanos(T_NCS_SCLK_NS)).await;
 
         self.spi.write(&[addr & 0x7f]).await.map_err(|_| Paw3222Error::Spi)?;
-
-        Timer::after(Duration::from_micros(T_SRAD_US)).await;
 
         let mut value = [0u8];
         self.spi.read(&mut value).await.map_err(|_| Paw3222Error::Spi)?;
 
-        Timer::after(Duration::from_nanos(T_SCLK_NCS_R_NS)).await;
         let _ = self.cs.set_high();
-
-        Timer::after(Duration::from_micros(T_SWX_US)).await;
 
         Ok(value[0])
     }
 
     async fn write_reg(&mut self, addr: u8, value: u8) -> Result<(), Paw3222Error> {
         let _ = self.cs.set_low();
-        Timer::after(Duration::from_nanos(T_NCS_SCLK_NS)).await;
 
         self.spi
             .write(&[addr | SPI_WRITE, value])
             .await
             .map_err(|_| Paw3222Error::Spi)?;
 
-        Timer::after(Duration::from_micros(T_SCLK_NCS_W_US)).await;
         let _ = self.cs.set_high();
-
-        Timer::after(Duration::from_micros(T_SWX_US)).await;
 
         Ok(())
     }
@@ -228,14 +222,12 @@ impl<SPI: SpiBus, CS: OutputPin, MOTION: InputPin + Wait> Paw3222<SPI, CS, MOTIO
     /// read describes, so it is kept rather than split into two `read_reg`s.
     async fn read_xy(&mut self) -> Result<(i16, i16), Paw3222Error> {
         let _ = self.cs.set_low();
-        Timer::after(Duration::from_nanos(T_NCS_SCLK_NS)).await;
 
         let mut x = [0u8];
         self.spi
             .write(&[PAW3222_DELTA_X])
             .await
             .map_err(|_| Paw3222Error::Spi)?;
-        Timer::after(Duration::from_micros(T_SRAD_US)).await;
         self.spi.read(&mut x).await.map_err(|_| Paw3222Error::Spi)?;
 
         let mut y = [0u8];
@@ -243,13 +235,9 @@ impl<SPI: SpiBus, CS: OutputPin, MOTION: InputPin + Wait> Paw3222<SPI, CS, MOTIO
             .write(&[PAW3222_DELTA_Y])
             .await
             .map_err(|_| Paw3222Error::Spi)?;
-        Timer::after(Duration::from_micros(T_SRAD_US)).await;
         self.spi.read(&mut y).await.map_err(|_| Paw3222Error::Spi)?;
 
-        Timer::after(Duration::from_nanos(T_SCLK_NCS_R_NS)).await;
         let _ = self.cs.set_high();
-
-        Timer::after(Duration::from_micros(T_SWX_US)).await;
 
         Ok((
             sign_extend(x[0], PAW3222_DATA_SIZE_BITS - 1),

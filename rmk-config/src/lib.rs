@@ -812,6 +812,10 @@ pub(crate) struct AutoMouseLayerConfig {
     /// Minimum absolute axis delta required to be considered as motion.
     /// Defaults to `1` (any motion). Helpful to filter out sensor noise.
     pub threshold: Option<u16>,
+    /// Layers that suppress this entry: while any of them is active, motion does
+    /// not activate `target_layer`. Use it for layers that already give the
+    /// pointing device a job of their own, such as a scroll layer.
+    pub exclude_layers: Option<Vec<u8>>,
     /// When `true`, non-mouse key presses deactivate `target_layer` immediately (mouse HID keys and `extra_mouse_keys` excepted).
     /// Macro-emitted keycodes, `Again`/`Repeat`, and `GraveEscape` cannot be classified and never deactivate the layer.
     pub deactivate_on_key: Option<bool>,
