@@ -1,7 +1,14 @@
 //! Utilities of check cargo feature
 //!
 
-/// Get enabled RMK features list
+/// Get enabled RMK features list.
+///
+/// The list is read from the `rmk` entry in the user crate's `Cargo.toml`.
+/// A crate that forwards rmk features through its own `[features]` (for
+/// example `vial = ["rmk/vial"]`, selected with `--features`) is invisible
+/// there, so its build script can name the forwarded features in the
+/// `RMK_FEATURES` environment variable (comma separated, via
+/// `cargo:rustc-env=RMK_FEATURES=vial,host_lock`); those are added.
 pub(crate) fn get_rmk_features() -> Option<Vec<String>> {
     // Use an absolute path. `cargo_toml::Manifest::from_path` resolves the
     // workspace root by walking ancestors of the given path; passing a
@@ -33,6 +40,9 @@ pub(crate) fn get_rmk_features() -> Option<Vec<String>> {
                     feature_set.push("vial".to_string());
                     feature_set.push("host_lock".to_string());
                     feature_set.push("watchdog".to_string());
+                }
+                if let Ok(forwarded) = std::env::var("RMK_FEATURES") {
+                    feature_set.extend(forwarded.split(',').map(str::trim).filter(|f| !f.is_empty()).map(String::from));
                 }
                 feature_set
             }),
