@@ -42,7 +42,13 @@ pub(crate) fn get_rmk_features() -> Option<Vec<String>> {
                     feature_set.push("watchdog".to_string());
                 }
                 if let Ok(forwarded) = std::env::var("RMK_FEATURES") {
-                    feature_set.extend(forwarded.split(',').map(str::trim).filter(|f| !f.is_empty()).map(String::from));
+                    feature_set.extend(
+                        forwarded
+                            .split(',')
+                            .map(str::trim)
+                            .filter(|f| !f.is_empty())
+                            .map(String::from),
+                    );
                 }
                 feature_set
             }),

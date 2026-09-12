@@ -11,7 +11,7 @@ use trouble_host::prelude::*;
 
 use super::GattSplitMessage;
 use crate::ble::adv::Adv;
-use crate::ble::scan::{SPLIT_CENTRAL_SCAN_WINDOW, scan_config, start_scan};
+use crate::ble::scan::{SPLIT_CENTRAL_SCAN_WINDOW, scan_config, sleep_scan_config, start_scan};
 use crate::ble::sleep::report_activity;
 use crate::ble::{update_ble_phy, update_conn_params, wait_for_stack_started};
 use crate::channel::FLASH_CHANNEL;
@@ -80,15 +80,36 @@ pub(crate) async fn scan_and_connect_peripherals<'a, C: Controller + ControllerC
             // If there're `Disconnected` peripherals, connect to them first.
             let targets: heapless::Vec<Address, { crate::SPLIT_PERIPHERALS_NUM }> =
                 pending.iter().map(|(_, addr)| Address::random(*addr)).collect();
+            // Asleep, the initiator runs at a low duty cycle for as long as the
+            // sleep lasts; awake, at full duty for 15s.
+            let asleep = crate::state::current_sleep_state();
             let config = ConnectConfig {
                 connect_params: default_split_conn_params(),
                 scan_config: ScanConfig {
                     filter_accept_list: &targets,
-                    ..scan_config(SPLIT_CENTRAL_SCAN_WINDOW)
+                    ..if asleep {
+                        sleep_scan_config()
+                    } else {
+                        scan_config(SPLIT_CENTRAL_SCAN_WINDOW)
+                    }
                 },
             };
-            info!("Start connecting, {} peripheral(s) pending", pending.len());
-            let connected = match with_timeout(Duration::from_secs(15), central.connect(&config)).await {
+            info!(
+                "Start connecting, {} peripheral(s) pending, asleep: {}",
+                pending.len(),
+                asleep
+            );
+            let result = if asleep {
+                // Dropping the connect future cancels the initiator, so waking up
+                // (or a session ending) simply abandons this attempt.
+                match select(central.connect(&config), wait_until_wakeup(ended)).await {
+                    Either::First(r) => Ok(r),
+                    Either::Second(()) => Err(embassy_time::TimeoutError),
+                }
+            } else {
+                with_timeout(Duration::from_secs(15), central.connect(&config)).await
+            };
+            let connected = match result {
                 Ok(Ok(conn)) => {
                     let peer = conn.peer_address();
                     if let Some(&(id, addr)) = pending.iter().find(|(_, addr)| Address::random(*addr) == peer) {
@@ -108,9 +129,11 @@ pub(crate) async fn scan_and_connect_peripherals<'a, C: Controller + ControllerC
                     false
                 }
                 Err(_) => {
-                    // None answered.
-                    if crate::state::current_sleep_state() {
-                        warn!("Connect timeout while asleep, keeping {} address(es)", pending.len());
+                    // None answered while awake: forget the addresses and scan
+                    // afresh. Asleep, this is the wake-up (or a session ending)
+                    // interrupting the low-duty attempt; the addresses stay.
+                    if asleep {
+                        info!("Sleep-time connect interrupted, keeping {} address(es)", pending.len());
                     } else {
                         warn!("Connect timeout, clearing {} address(es)", pending.len());
                         for &(id, _) in &pending {
@@ -120,11 +143,10 @@ pub(crate) async fn scan_and_connect_peripherals<'a, C: Controller + ControllerC
                     false
                 }
             };
-            // If connecting to the peripheral failed, and the central is sleeping,
-            // don't keep connecting, just wait.
-            if !connected {
-                wait_until_wakeup(ended).await;
-            }
+            // A failed awake attempt falls through to the next loop iteration
+            // (scan or retry); asleep, so does a failed low-duty attempt, since
+            // the next iteration starts another one.
+            let _ = connected;
         } else if peripheral_slots.iter().all(|s| matches!(s, SlotState::Connected(_))) {
             // All peripherals are connected: wait until a session ends.
             ended.ready_to_receive().await;
