@@ -20,10 +20,11 @@
 //!   that bit, and the ZMK port dropped to 8-bit outright; both therefore live
 //!   with the +-127 ceiling, which overflows on the first frame after the
 //!   sensor's sleep modes stretch the sampling period to 32-128 ms.
-//! - **Overflow is flagged, not silent.** `MOTION` bits 4/3 (`DYOVF`/`DXOVF`)
-//!   say the sensor's own buffer wrapped since the last read. In 12-bit mode
-//!   that takes two inches of travel between reads, so it marks a genuinely
-//!   garbage sample, which is dropped rather than reported as a jump.
+//! - **The overflow flags are not a drop signal.** `MOTION` bits 4/3
+//!   (`DYOVF`/`DXOVF`) follow the 8-bit report buffer: on hardware they were
+//!   set on every brisk sample with 12-bit mode confirmed, so treating them as
+//!   "garbage, discard" left the cursor nearly still at speed. They are logged
+//!   and otherwise ignored, as Zephyr's driver does.
 //! - **No burst-read register.** `MOTION`, `DELTA_X`, `DELTA_Y` and
 //!   `DELTA_XY_HI` are read back to back inside a single CS assertion, which is
 //!   what the Zephyr driver's six-byte transceive does on the wire.
@@ -451,18 +452,17 @@ where
 
         let motion = if (status & MOTION_STATUS_MOTION) == 0 {
             MotionData::default()
-        } else if self.twelve_bit && (status & MOTION_STATUS_OVF) != 0 {
-            // In 12-bit mode the sensor's own buffer wrapped since the last
-            // read, so these deltas are garbage; reporting them would move the
-            // cursor by a wrapped, wrong-signed amount. One dropped frame is
-            // invisible. In 8-bit mode the same flags merely say a brisk sample
-            // saturated at +-127, and the value is still the best available.
-            warn!(
-                "PAW3222 {}: delta overflow, sample dropped (status {:#04x})",
-                self.id, status
-            );
-            MotionData::default()
         } else {
+            // DXOVF/DYOVF are reported but never acted on. On hardware they
+            // came up on every brisk sample even with 12-bit mode confirmed --
+            // they track the 8-bit report buffer, not the 12-bit readout -- and
+            // dropping those samples left the cursor nearly still at speed.
+            // Zephyr's driver ignores the flags too. A real 12-bit wrap would
+            // need two inches of travel between two reads, which per-frame
+            // reading cannot produce.
+            if (status & MOTION_STATUS_OVF) != 0 {
+                trace!("PAW3222 {}: overflow flag set (status {:#04x})", self.id, status);
+            }
             MotionData { dx, dy }
         };
 
