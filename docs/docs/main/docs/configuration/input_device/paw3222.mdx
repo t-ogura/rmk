@@ -1,0 +1,137 @@
+# PAW3222 Optical Mouse Sensor
+
+PAW3222 is a low-power optical mouse sensor, common in trackball split keyboards.
+
+::: note
+- Currently, only implemented for nRF52 and RP2040 with a single-wire (SDIO) half-duplex SPI.
+- Set `motion` pin for better power efficiency. If omitted, the sensor is polled.
+- By default, report rate is limited to 125 Hz to prevent flooding the event channel, which causes latency issues especially over BLE.
+:::
+
+## `toml` configuration
+
+::: warning
+`spi.mosi` and `spi.miso` must be the same pin, or one of them empty.
+:::
+
+```toml
+[[input_device.paw3222]]
+name = "trackball0"
+id = 0 # optional number between 0-255. The generated PointingProcessor is paired to it. Set to 0 if omitted.
+
+spi.instance = "bitbang0"
+spi.sck = "P1_12"
+spi.mosi = "P1_13"
+spi.miso = "P1_13"
+spi.cs = "P1_15"
+# or spi = { instance = "bitbang0", sck = "P1_12", mosi = "P1_13", miso = "P1_13", cs = "P1_15" }
+
+motion = "P1_14" # Optional. If omitted, the sensor is polled.
+
+report_hz = 125 # Optional: Report rate in Hz
+
+force_awake = false
+cpi = 800 # Optional: 608-4826, in steps of 38. Omit to keep the sensor's own default.
+# invert / swap axis on a sensor level (the MOUSE_OPTION register)
+invert_x = true
+# invert_y = true
+# swap_xy = true
+# invert / swap axis in software (in PointingProcessor)
+# proc_invert_x = true
+# proc_invert_y = true
+# proc_swap_xy = true
+```
+
+The sensor is read every 4 ms (the generated `PointingDevice`'s poll interval)
+and accumulates its deltas in between; with the motion pin wired, the read
+also waits for the pin. Deltas are 12-bit (`DELTA_X`/`DELTA_Y` plus
+`DELTA_XY_HI`): the driver enables 12-bit mode itself, since the part powers
+up in 8-bit mode where deltas saturate at ±127.
+
+`force_awake` holds the sensor in Run mode (~0.25 mA) instead of letting it
+drop to Sleep1 (16 uA, sampling every 32 ms after 256 ms idle) and Sleep2
+(7 uA, every 128 ms after 20 s). Leave it off on a battery: with 12-bit deltas
+the sleep windows do not overflow at the sensor's rated speed, so all it buys
+is up to one sleep sampling period of wake-up latency.
+
+CPI is written as `cpi / 38` into a register field the datasheet limits to
+16..=127, which is where the 608..=4826 range comes from. A value outside it is
+rejected at runtime.
+
+### Split
+
+To add the sensor to the central or peripheral use
+
+```toml
+[[split.central.input_device.paw3222]]
+name = ...
+
+# resp.
+[[split.peripheral.input_device.paw3222]]
+name = ...
+```
+
+::: warning Multi-device ID assignment
+`PointingEvent` carries a `device_id` so that each `PointingProcessor` can be paired with a specific sensor. If you have sensors on both halves of a split keyboard, assign distinct ids to avoid the central treating them as the same device:
+
+```toml
+# Central side sensor
+[[split.central.input_device.paw3222]]
+id = 0
+
+# Peripheral side sensor
+[[split.peripheral.input_device.paw3222]]
+id = 1
+```
+
+The peripheral forwards events to the central with the `device_id` preserved. The generated `PointingProcessorConfig` on the central will automatically use the matching `device_id` for each sensor.
+:::
+
+## Rust configuration
+
+Define a `PointingDevice` and add it to `run_all!` macro. For a split keyboard this must be added to the file (`central.rs` or `peripheral.rs`) corresponding to the side the sensor is connected to.
+
+```rust
+use embassy_nrf::gpio::{Flex, Input, Level, Output, OutputDrive, Pull};
+use rmk::input_device::paw3222::{BitBangSpiBus, Paw3222, Paw3222Config};
+use rmk::input_device::pointing::PointingDevice;
+
+let paw3222_config = Paw3222Config {
+    res_cpi: 800,
+    // force_awake: true,
+    // invert_x: true,
+    // invert_y: true,
+    // swap_xy: true,
+    ..Default::default()
+};
+
+let paw3222_sck = Output::new(p.P1_12, Level::High, OutputDrive::Standard);
+let paw3222_sdio = Flex::new(p.P1_13);
+let paw3222_cs = Output::new(p.P1_15, Level::High, OutputDrive::Standard);
+let paw3222_motion = Some(Input::new(p.P1_14, Pull::Up));
+// or if you want to omit the motion pin:
+// let paw3222_motion = Option::<Input<'static>>::None;
+
+let paw3222_spi = BitBangSpiBus::new(paw3222_sck, paw3222_sdio);
+
+const POINTING_DEV_ID: u8 = 0; // this ID can be anything from 0-255. Just make sure you don't use the same number twice for different sensors to avoid confusion.
+let mut paw3222_device = PointingDevice::<Paw3222<_, _, _>>::new(
+    POINTING_DEV_ID,
+    paw3222_spi,
+    paw3222_cs,
+    paw3222_motion,
+    paw3222_config,
+);
+
+run_all!(matrix, paw3222_device),
+```
+
+And define a `PointingProcessor` and add it to `run_all!` macro to process the events, exactly as for the [PMW3610](./pmw3610).
+
+::: warning
+This should be added to the `central.rs`-File even if the sensor is on split peripheral.
+:::
+
+## Pointing Modes
+
+The PointingProcessor has four modes (Cursor, Scroll, Sniper, Caret) with per-layer configuration. See the [PointingProcessor](./pointing_processor) page for all options.

@@ -262,8 +262,8 @@ transform = [[80, 0], [0, 80]]
 bias = [29130, 29365]
 resolution = 6
 
-# PMW3610 optical sensor. [[input_device.pmw33xx]] and [[input_device.iqs5xx]] follow the same
-# pattern, see their documentation pages
+# PMW3610 optical sensor. [[input_device.paw3222]], [[input_device.pmw33xx]] and
+# [[input_device.iqs5xx]] follow the same pattern, see their documentation pages
 [[input_device.pmw3610]]
 name = "trackball0"
 # Pointing device id, pairs the sensor with its PointingProcessor and [[behavior.auto_mouse_layer]]. Defaults to 0

@@ -27,6 +27,7 @@
       "pointing_processor",
       "encoder",
       "joystick",
+      "paw3222",
       "pmw33xx",
       "pmw3610",
       "iqs5xx"

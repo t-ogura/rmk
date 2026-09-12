@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add a PAW3222 optical mouse sensor driver (`[[input_device.paw3222]]`, single-wire bit-banged SPI on nRF52 and RP2040), reading 12-bit deltas with the sensor's power-saving modes left on
 - Macro operations accept any single action (`WM`, `MO`, `OSM`, ...) without the `vial` feature, and a new `pause_for_release` operation (`MacroOp::PauseForRelease`) runs the rest of the macro when the macro key is released
 - PMW3610 `force_awake` now follows the keyboard's sleep state, ZMK style: the sensor is held in RUN while the keyboard is awake and released to its REST modes when the idle sleep starts. `PointingDriver` gained a default-implemented `set_low_power` hint and `PointingDevice` subscribes to `SleepStateEvent`; each sensor in `keyboard.toml` reserves its subscriber slot automatically.
 - Make Trouble BLE roles explicit, document environment-variable memory tuning, update the nRF52832 examples to peripheral-only SDC, and derive split notification capacity from Trouble's configured packet-pool MTU.

@@ -11,7 +11,7 @@ pub use crate::{
     BleConfig, ChipConfig, CommunicationProtocol, DependencyConfig, DfuTomlConfig, DisplayConfig, DisplayDriver,
     EncoderConfig, EncoderResolution, ExternalFlashDriver, ExternalFlashTomlConfig, I2cConfig, InputDeviceConfig,
     Iqs5xxConfig, Iqs5xxI2cConfig, JoystickConfig, KeyInfo, LightConfig, MatrixConfig, MatrixType, OutputConfig,
-    PinConfig, Pmw33xxConfig, Pmw33xxType, Pmw3610Config, PointingDeviceConfig, SerialConfig, SpiConfig,
+    Paw3222Config, PinConfig, Pmw33xxConfig, Pmw33xxType, Pmw3610Config, PointingDeviceConfig, SerialConfig, SpiConfig,
     SplitBoardConfig, SplitConfig,
 };
 
