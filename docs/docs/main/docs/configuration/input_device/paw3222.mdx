@@ -44,6 +44,15 @@ invert_x = true
 The sensor has no axis-swap register, so `swap_xy` is available only as
 `proc_swap_xy`, in the processor.
 
+Deltas are read as 12-bit values (`DELTA_X`/`DELTA_Y` plus `DELTA_XY_HI`), and
+a sample whose `MOTION` overflow flags are set is dropped rather than reported.
+
+`force_awake` keeps the sensor in Run mode (~0.25 mA on the datasheet) instead
+of letting it drop to Sleep1 (16 uA, sampling every 32 ms after 256 ms idle)
+and Sleep2 (7 uA, every 128 ms after 20 s). Leave it off on a battery: with
+12-bit deltas neither sleep window overflows at the sensor's rated speed, so
+the only thing it buys is up to one sleep sampling period of wake-up latency.
+
 CPI is written as `cpi / 38` into a register field the datasheet limits to
 16..=127, which is where the 608..=4826 range comes from. A value outside it is
 rejected at runtime.

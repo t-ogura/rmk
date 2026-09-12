@@ -11,16 +11,28 @@
 //!
 //! Differences from the PMW3610 worth knowing:
 //!
-//! - **8-bit deltas, not 12.** `DELTA_X` / `DELTA_Y` are one byte each and are
-//!   sign-extended. There is a `DELTA_XY_HI` register, but the Zephyr driver
-//!   reads it only to drain it during init and this driver does the same.
-//! - **No burst-read register.** Motion is read as `MOTION`, then `DELTA_X` and
-//!   `DELTA_Y` back to back inside a single CS assertion, which is what the
-//!   Zephyr driver's 4-byte transceive does on the wire.
+//! - **12-bit deltas, assembled from three registers.** `DELTA_X` / `DELTA_Y`
+//!   carry bits 7:0 and `DELTA_XY_HI` carries bits 11:8 of both (X in its upper
+//!   nibble, Y in its lower), giving +-2047 per read. Zephyr's driver reads it
+//!   this way; the ZMK port this was first modelled on had dropped to the low
+//!   byte alone, whose +-127 overflows on the first frame after the sensor's
+//!   sleep modes stretch the sampling period to 32-128 ms.
+//! - **Overflow is flagged, not silent.** `MOTION` bits 4/3 (`DYOVF`/`DXOVF`)
+//!   say the sensor's own buffer wrapped since the last read; such a sample is
+//!   garbage and is dropped rather than reported as a jump.
+//! - **No burst-read register.** `MOTION`, `DELTA_X`, `DELTA_Y` and
+//!   `DELTA_XY_HI` are read back to back inside a single CS assertion, which is
+//!   what the Zephyr driver's six-byte transceive does on the wire.
 //! - **Write protection.** `CPI_X` / `CPI_Y` / `OPERATION_MODE` only accept
 //!   writes while `WRITE_PROTECT` holds `0x5a`; it must be closed again after.
 //! - **CPI granularity is 38.** `cpi / 38` goes in the register, so the usable
-//!   range is 608..=4826 CPI.
+//!   range is 608..=4826 CPI; the sensor powers up at 27 * 38 = 1026 CPI.
+//!
+//! Power: the datasheet gives ~0.25 mA average in Run, 16 uA in Sleep1 and
+//! 7 uA in Sleep2 (both enabled by default), so `force_awake` is a real cost on
+//! a battery. With 12-bit deltas it is not needed for tracking either: Sleep1
+//! samples every 32 ms and Sleep2 every 128 ms, and even the slower window
+//! cannot overflow +-2047 counts at the sensor's rated 30 ips.
 //!
 //! SPI is mode 3 (CPOL=1, CPHA=1), MSB first, up to 2 MHz — which is what
 //! [`BitBangSpiBus`] produces: it idles SCK high, moves SDIO while SCK is high
@@ -56,6 +68,9 @@ const PAW3222_MOUSE_OPTION: u8 = 0x19;
 const PRODUCT_ID_PAW3222: u8 = 0x30;
 const SPI_WRITE: u8 = 0x80;
 const MOTION_STATUS_MOTION: u8 = 0x80;
+const MOTION_STATUS_DYOVF: u8 = 1 << 4;
+const MOTION_STATUS_DXOVF: u8 = 1 << 3;
+const MOTION_STATUS_OVF: u8 = MOTION_STATUS_DYOVF | MOTION_STATUS_DXOVF;
 
 const OPERATION_MODE_SLP_ENH: u8 = 1 << 4;
 const OPERATION_MODE_SLP2_ENH: u8 = 1 << 3;
@@ -70,7 +85,7 @@ const MOUSE_OPTION_INV_X: u8 = 1 << 3;
 const MOUSE_OPTION_INV_Y: u8 = 1 << 4;
 const MOUSE_OPTION_INV_MASK: u8 = MOUSE_OPTION_INV_X | MOUSE_OPTION_INV_Y;
 
-const PAW3222_DATA_SIZE_BITS: usize = 8;
+const PAW3222_DATA_SIZE_BITS: usize = 12;
 
 // Timing constants
 /// Delay after the soft reset in `CONFIGURATION` before the part answers again.
@@ -150,14 +165,25 @@ impl From<Paw3222Error> for PointingDriverError {
 }
 
 /// Sign-extend the sensor's two's-complement delta, whose sign bit is at `bits`.
-fn sign_extend(value: u8, bits: usize) -> i16 {
+fn sign_extend(value: u16, bits: usize) -> i16 {
     let sign_bit = 1u16 << bits;
-    let value = value as u16;
     if value & sign_bit != 0 {
         (value | !((1u16 << (bits + 1)) - 1)) as i16
     } else {
         value as i16
     }
+}
+
+/// Assemble the 12-bit deltas from the sensor's three delta registers.
+///
+/// `DELTA_XY_HI` holds X[11:8] in its upper nibble and Y[11:8] in its lower.
+fn assemble_deltas(x_low: u8, y_low: u8, hi: u8) -> (i16, i16) {
+    let x = (((hi as u16) << 4) & 0x0f00) | x_low as u16;
+    let y = (((hi as u16) << 8) & 0x0f00) | y_low as u16;
+    (
+        sign_extend(x, PAW3222_DATA_SIZE_BITS - 1),
+        sign_extend(y, PAW3222_DATA_SIZE_BITS - 1),
+    )
 }
 
 /// PAW3222 driver using embedded-hal SPI traits
@@ -213,37 +239,33 @@ impl<SPI: SpiBus, CS: OutputPin, MOTION: InputPin + Wait> Paw3222<SPI, CS, MOTIO
         self.write_reg(addr, val).await
     }
 
-    /// Read `DELTA_X` then `DELTA_Y` inside one CS assertion.
+    /// Read `MOTION`, `DELTA_X`, `DELTA_Y` and `DELTA_XY_HI` inside one CS
+    /// assertion, and return `(status, dx, dy)`.
     ///
-    /// The Zephyr driver does this as a single four-byte transceive
-    /// (`[DELTA_X, 0xff, DELTA_Y, 0xff]`), keeping NCS low across both
-    /// registers; on a half-duplex bus the same wire sequence is an address
-    /// write, a data read, another address write and another data read. Reading
-    /// the two registers under one assertion is what the datasheet's motion
-    /// read describes, so it is kept rather than split into two `read_reg`s.
-    async fn read_xy(&mut self) -> Result<(i16, i16), Paw3222Error> {
+    /// The Zephyr driver issues this as a single transceive with NCS held low
+    /// across all four registers; on a half-duplex bus the same wire sequence is
+    /// an address write and a data read per register. The order is the
+    /// datasheet's: `MOTION` first, because reading it is what validates the
+    /// delta registers behind it.
+    async fn read_motion_burst(&mut self) -> Result<(u8, i16, i16), Paw3222Error> {
         let _ = self.cs.set_low();
 
-        let mut x = [0u8];
-        self.spi
-            .write(&[PAW3222_DELTA_X])
-            .await
-            .map_err(|_| Paw3222Error::Spi)?;
-        self.spi.read(&mut x).await.map_err(|_| Paw3222Error::Spi)?;
-
-        let mut y = [0u8];
-        self.spi
-            .write(&[PAW3222_DELTA_Y])
-            .await
-            .map_err(|_| Paw3222Error::Spi)?;
-        self.spi.read(&mut y).await.map_err(|_| Paw3222Error::Spi)?;
+        let mut regs = [0u8; 4];
+        for (value, addr) in
+            regs.iter_mut()
+                .zip([PAW3222_MOTION, PAW3222_DELTA_X, PAW3222_DELTA_Y, PAW3222_DELTA_XY_HI])
+        {
+            let mut byte = [0u8];
+            self.spi.write(&[addr]).await.map_err(|_| Paw3222Error::Spi)?;
+            self.spi.read(&mut byte).await.map_err(|_| Paw3222Error::Spi)?;
+            *value = byte[0];
+        }
 
         let _ = self.cs.set_high();
 
-        Ok((
-            sign_extend(x[0], PAW3222_DATA_SIZE_BITS - 1),
-            sign_extend(y[0], PAW3222_DATA_SIZE_BITS - 1),
-        ))
+        let [status, x_low, y_low, hi] = regs;
+        let (dx, dy) = assemble_deltas(x_low, y_low, hi);
+        Ok((status, dx, dy))
     }
 
     /// `CPI_X`, `CPI_Y` and `OPERATION_MODE` silently ignore writes unless
@@ -355,11 +377,20 @@ where
     }
 
     async fn read_motion(&mut self) -> Result<MotionData, PointingDriverError> {
-        let status = self.read_reg(PAW3222_MOTION).await?;
+        let (status, dx, dy) = self.read_motion_burst().await?;
+
         let motion = if (status & MOTION_STATUS_MOTION) == 0 {
             MotionData::default()
+        } else if (status & MOTION_STATUS_OVF) != 0 {
+            // The sensor's own buffer wrapped since the last read, so these
+            // deltas are garbage; reporting them would move the cursor by a
+            // wrapped, wrong-signed amount. One dropped frame is invisible.
+            warn!(
+                "PAW3222 {}: delta overflow, sample dropped (status {:#04x})",
+                self.id, status
+            );
+            MotionData::default()
         } else {
-            let (dx, dy) = self.read_xy().await?;
             MotionData { dx, dy }
         };
 
@@ -492,15 +523,28 @@ where
 mod tests {
     use super::*;
 
-    /// 8-bit two's complement, the width the PAW3222 reports deltas in.
+    /// 12-bit two's complement, the width the PAW3222 reports deltas in.
     #[test]
-    fn sign_extend_8bit() {
+    fn sign_extend_12bit() {
         let bits = PAW3222_DATA_SIZE_BITS - 1;
-        assert_eq!(sign_extend(0x00, bits), 0);
-        assert_eq!(sign_extend(0x01, bits), 1);
-        assert_eq!(sign_extend(0x7f, bits), 127);
-        assert_eq!(sign_extend(0x80, bits), -128);
-        assert_eq!(sign_extend(0xff, bits), -1);
+        assert_eq!(sign_extend(0x000, bits), 0);
+        assert_eq!(sign_extend(0x001, bits), 1);
+        assert_eq!(sign_extend(0x7ff, bits), 2047);
+        assert_eq!(sign_extend(0x800, bits), -2048);
+        assert_eq!(sign_extend(0xfff, bits), -1);
+    }
+
+    /// `DELTA_XY_HI` carries X[11:8] in its upper nibble and Y[11:8] in its
+    /// lower, exactly as Zephyr's `input_paw32xx.c` assembles them.
+    #[test]
+    fn assemble_deltas_places_the_high_nibbles() {
+        // Small positive motion: high nibbles are zero.
+        assert_eq!(assemble_deltas(0x05, 0x03, 0x00), (5, 3));
+        // Small negative motion: high nibbles are the sign extension.
+        assert_eq!(assemble_deltas(0xfb, 0xfd, 0xff), (-5, -3));
+        // Beyond eight bits, which is the whole point.
+        assert_eq!(assemble_deltas(0x00, 0x00, 0x12), (0x100, 0x200));
+        assert_eq!(assemble_deltas(0xff, 0xff, 0x7f), (0x7ff, -1));
     }
 
     /// The register takes `cpi / 38` in a field the datasheet limits to
