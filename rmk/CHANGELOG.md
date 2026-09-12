@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Cache the storage map's page states and key pointers: every fetch used to walk all stored items from the newest page back, which with a few hundred keys took 8-20 s of boot on nRF52840 before the first task ran
+- With `[storage] clear_layout`, write only the keymap and encoder entries that differ from what is stored; on nRF every flash write is an MPSL timeslot and a full rewrite cost ~20 s at every boot
 - Keep other physically held one-shot modifiers active when one is released
 - Preserve unresolved keys from unrelated combos when another combo triggers, instead of silently discarding their press events
 - Identify the keyboard's HID report characteristics on the dongle by their Report Reference descriptor instead of `HidService`'s declaration order.
