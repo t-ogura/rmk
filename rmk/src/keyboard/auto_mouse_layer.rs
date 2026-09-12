@@ -103,6 +103,17 @@ impl<'a, 'k> AutoMouseLayerRunner<'a, 'k> {
         if !is_cursor_motion(&event, self.entries[idx].config.threshold) {
             return;
         }
+        // A layer that already drives the pointing device -- a scroll layer, say
+        // -- would otherwise have this layer stacked on top of it the moment the
+        // user moves, silently replacing its keymap.
+        if self.entries[idx]
+            .config
+            .exclude_layers
+            .iter()
+            .any(|&layer| self.keymap.is_layer_active(layer))
+        {
+            return;
+        }
         let target_layer = self.entries[idx].config.target_layer;
         let activated_by_us = self.keymap.activate_layer_if_inactive(target_layer);
         if pointing_step(&mut self.entries, idx, Instant::now(), activated_by_us) == PointingOutcome::OverlapFirstSeen {
@@ -116,8 +127,24 @@ impl<'a, 'k> AutoMouseLayerRunner<'a, 'k> {
     }
 
     async fn on_layer_change_event(&mut self, LayerChangeEvent(top): LayerChangeEvent) {
-        // Layer turned off externally (MO/TG key etc.) — release our hold.
+        // An excluded layer just came up under a layer we are holding. Step
+        // aside now rather than at the timeout: the user reached for a layer
+        // that wants the pointing device, and waiting out `timeout` would leave
+        // them with the wrong keymap and the wrong pointing mode meanwhile.
         let keymap = self.keymap;
+        for entry in self.entries.iter_mut() {
+            if entry.self_activated
+                && entry
+                    .config
+                    .exclude_layers
+                    .iter()
+                    .any(|&layer| keymap.is_layer_active(layer))
+            {
+                keymap.deactivate_layer_if_active(entry.config.target_layer);
+            }
+        }
+
+        // Layer turned off externally (MO/TG key etc.) — release our hold.
         for entry in self.entries.iter_mut() {
             if entry.self_activated && !keymap.is_layer_active(entry.config.target_layer) {
                 entry.self_activated = false;
@@ -402,6 +429,7 @@ mod tests {
                 target_layer: 0,
                 timeout: embassy_time::Duration::from_millis(100),
                 threshold: 1,
+                exclude_layers: &[],
                 deactivate_on_key: false,
                 extra_mouse_keys: &[],
                 reset_timeout_on_key: false,

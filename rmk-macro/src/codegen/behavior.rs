@@ -536,6 +536,7 @@ fn expand_auto_mouse_layer(auto_mouse_layer: &[AutoMouseLayer]) -> proc_macro2::
             None => quote! { ::core::option::Option::None },
         };
         let deactivate_on_key = cfg.deactivate_on_key;
+        let exclude_layers = cfg.exclude_layers.iter().copied();
         let reset_timeout_on_key = cfg.reset_timeout_on_key;
         let exception_idents: Vec<_> = cfg
             .extra_mouse_keys
@@ -553,6 +554,7 @@ fn expand_auto_mouse_layer(auto_mouse_layer: &[AutoMouseLayer]) -> proc_macro2::
                 target_layer: #target_layer,
                 timeout: ::embassy_time::Duration::from_millis(#timeout_ms),
                 threshold: #threshold,
+                exclude_layers: &[#(#exclude_layers),*],
                 deactivate_on_key: #deactivate_on_key,
                 extra_mouse_keys: &[#(#exception_tokens),*],
                 reset_timeout_on_key: #reset_timeout_on_key,

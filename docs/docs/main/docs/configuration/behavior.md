@@ -557,6 +557,13 @@ deactivate_on_key = true
 extra_mouse_keys = ["LCtrl", "LShift", "LAlt", "LGui"]
 reset_timeout_on_key = true
 
+# Leave the pointing device alone while a layer that already uses it is active.
+# A scroll layer is the usual case: without this, the first flick of the ball
+# stacks the mouse layer on top of it and replaces its keymap.
+[[behavior.auto_mouse_layer]]
+target_layer = 4
+exclude_layers = [3]
+
 # Required when using deactivate_on_key / reset_timeout_on_key (defaults to 0).
 [event.action]
 subs = 1
@@ -568,6 +575,7 @@ subs = 1
 | `target_layer`         | integer          | —         | Layer index to activate (must be `< [keymap].layers`).                                                                                                                                                                                                                   |
 | `timeout`              | string           | `"500ms"` | Inactivity duration before deactivation (e.g., `"600ms"`, `"2s"`).                                                                                                                                                                                                       |
 | `threshold`            | integer          | `1`       | Minimum absolute X/Y delta to trigger motion (`>= 1`). Increase to filter sensor noise.                                                                                                                                                                                  |
+| `exclude_layers`       | array of integers | `[]`     | While any listed layer is active, motion does not activate `target_layer`. Use it for layers that already drive the pointing device, such as a scroll layer.                                                                                                             |
 | `deactivate_on_key`    | bool             | `false`   | When `true`, pressing any non-mouse key immediately deactivates `target_layer` (ignoring `timeout`). Mouse HID keys and keys listed in `extra_mouse_keys` do NOT trigger deactivation. Keys are classified by their **resolved** keycode; see the limitation note below. |
 | `extra_mouse_keys`     | array of strings | `[]`      | Extra keycodes (e.g. `"LCtrl"`, `"Space"`) treated like mouse keys for the purpose of `deactivate_on_key`.                                                                                                                                                               |
 | `reset_timeout_on_key` | bool             | `false`   | When `true`, key presses that do NOT deactivate `target_layer` push the `timeout` deadline forward (reset it to _now + `timeout`_). When `deactivate_on_key` is `false`, every key press extends the timeout.                                                            |

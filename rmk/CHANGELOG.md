@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add `exclude_layers` to `[[behavior.auto_mouse_layer]]`: while a listed layer is active (a scroll layer, say), motion does not raise the mouse layer, and a mouse layer already held steps aside as soon as a listed layer comes up
 - Make Trouble BLE roles explicit, document environment-variable memory tuning, update the nRF52832 examples to peripheral-only SDC, and derive split notification capacity from Trouble's configured packet-pool MTU.
 - Publish the dongle's state.
 

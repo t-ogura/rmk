@@ -48,6 +48,10 @@ pub struct AutoMouseLayerConfig {
     pub timeout: Duration,
     /// Minimum absolute X/Y axis delta to be considered as motion (must be `>= 1`)
     pub threshold: u16,
+    /// Layers that suppress this entry: while any of them is active, motion does
+    /// not activate [`Self::target_layer`]. Use it for layers that already give
+    /// the pointing device a job of their own, such as a scroll layer.
+    pub exclude_layers: &'static [u8],
     /// When `true`, non-mouse key presses deactivate [`Self::target_layer`] immediately (mouse HID keys and [`Self::extra_mouse_keys`] excepted).
     /// Keys are classified by their resolved action; macro-emitted keycodes, `Again`/`Repeat`,
     /// and `GraveEscape` cannot be classified and never deactivate the layer.
@@ -67,6 +71,7 @@ impl Default for AutoMouseLayerConfig {
             target_layer: 0,
             timeout: Duration::from_millis(500),
             threshold: 1,
+            exclude_layers: &[],
             deactivate_on_key: false,
             extra_mouse_keys: &[],
             reset_timeout_on_key: false,
@@ -94,6 +99,12 @@ impl AutoMouseLayerConfig {
     pub fn with_deactivate_on_key(mut self, exceptions: &'static [KeyCode]) -> Self {
         self.deactivate_on_key = true;
         self.extra_mouse_keys = exceptions;
+        self
+    }
+
+    /// Suppress this entry while any of `layers` is active.
+    pub fn with_exclude_layers(mut self, layers: &'static [u8]) -> Self {
+        self.exclude_layers = layers;
         self
     }
 
