@@ -11,20 +11,27 @@
 //!
 //! Differences from the PMW3610 worth knowing:
 //!
-//! - **12-bit deltas, assembled from three registers.** `DELTA_X` / `DELTA_Y`
+//! - **12-bit deltas, and they have to be switched on.** `DELTA_X` / `DELTA_Y`
 //!   carry bits 7:0 and `DELTA_XY_HI` carries bits 11:8 of both (X in its upper
-//!   nibble, Y in its lower), giving +-2047 per read. Zephyr's driver reads it
-//!   this way; the ZMK port this was first modelled on had dropped to the low
-//!   byte alone, whose +-127 overflows on the first frame after the sensor's
-//!   sleep modes stretch the sampling period to 32-128 ms.
+//!   nibble, Y in its lower), giving +-2047 per read -- but only once
+//!   `XY12bit_Enh` (`MOUSE_OPTION` bit 2) is set. The sensor powers up in 8-bit
+//!   mode, where the low byte saturates at +-127 and the overflow flags fire on
+//!   any brisk movement. Zephyr's driver assembles 12 bits without ever setting
+//!   that bit, and the ZMK port dropped to 8-bit outright; both therefore live
+//!   with the +-127 ceiling, which overflows on the first frame after the
+//!   sensor's sleep modes stretch the sampling period to 32-128 ms.
 //! - **Overflow is flagged, not silent.** `MOTION` bits 4/3 (`DYOVF`/`DXOVF`)
-//!   say the sensor's own buffer wrapped since the last read; such a sample is
-//!   garbage and is dropped rather than reported as a jump.
+//!   say the sensor's own buffer wrapped since the last read. In 12-bit mode
+//!   that takes two inches of travel between reads, so it marks a genuinely
+//!   garbage sample, which is dropped rather than reported as a jump.
 //! - **No burst-read register.** `MOTION`, `DELTA_X`, `DELTA_Y` and
 //!   `DELTA_XY_HI` are read back to back inside a single CS assertion, which is
 //!   what the Zephyr driver's six-byte transceive does on the wire.
 //! - **Write protection.** `CPI_X` / `CPI_Y` / `OPERATION_MODE` only accept
 //!   writes while `WRITE_PROTECT` holds `0x5a`; it must be closed again after.
+//! - **Axis inversion and swap are register bits.** `MOUSE_OPTION` bits 3/4
+//!   invert X/Y and bit 5 swaps them, all behind the same write protection as
+//!   the CPI registers.
 //! - **CPI granularity is 38.** `cpi / 38` goes in the register, so the usable
 //!   range is 608..=4826 CPI; the sensor powers up at 27 * 38 = 1026 CPI.
 //!
@@ -83,9 +90,11 @@ const CONFIGURATION_RESET: u8 = 1 << 7;
 const WRITE_PROTECT_ENABLE: u8 = 0x00;
 const WRITE_PROTECT_DISABLE: u8 = 0x5a;
 
+const MOUSE_OPTION_XY12BIT_ENH: u8 = 1 << 2;
 const MOUSE_OPTION_INV_X: u8 = 1 << 3;
 const MOUSE_OPTION_INV_Y: u8 = 1 << 4;
-const MOUSE_OPTION_INV_MASK: u8 = MOUSE_OPTION_INV_X | MOUSE_OPTION_INV_Y;
+const MOUSE_OPTION_SWAP_XY: u8 = 1 << 5;
+const MOUSE_OPTION_MASK: u8 = MOUSE_OPTION_XY12BIT_ENH | MOUSE_OPTION_INV_X | MOUSE_OPTION_INV_Y | MOUSE_OPTION_SWAP_XY;
 
 const PAW3222_DATA_SIZE_BITS: usize = 12;
 
@@ -126,6 +135,8 @@ pub struct Paw3222Config {
     pub invert_x: bool,
     /// Invert Y at the sensor (`MOUSE_OPTION` bit 4)
     pub invert_y: bool,
+    /// Swap X and Y at the sensor (`MOUSE_OPTION` bit 5)
+    pub swap_xy: bool,
     /// Force awake mode (disable the sensor's two sleep stages)
     pub force_awake: bool,
 }
@@ -136,6 +147,7 @@ impl Default for Paw3222Config {
             res_cpi: -1,
             invert_x: false,
             invert_y: false,
+            swap_xy: false,
             force_awake: false,
         }
     }
@@ -321,17 +333,25 @@ impl<SPI: SpiBus, CS: OutputPin, MOTION: InputPin + Wait> Paw3222<SPI, CS, MOTIO
             self.set_cpi(self.config.res_cpi as u16).await?;
         }
 
-        if self.config.invert_x || self.config.invert_y {
-            let mut val = 0u8;
-            if self.config.invert_x {
-                val |= MOUSE_OPTION_INV_X;
-            }
-            if self.config.invert_y {
-                val |= MOUSE_OPTION_INV_Y;
-            }
-            self.update_reg(PAW3222_MOUSE_OPTION, MOUSE_OPTION_INV_MASK, val)
-                .await?;
+        // MOUSE_OPTION sits above WRITE_PROTECT's boundary, so the window has
+        // to be open or the write is silently ignored. The 12-bit enable is not
+        // optional: the sensor powers up in 8-bit mode, where DELTA_X/Y saturate
+        // at +-127 and raise the overflow flags on any brisk movement, and
+        // DELTA_XY_HI reads back nothing useful.
+        let mut opt = MOUSE_OPTION_XY12BIT_ENH;
+        if self.config.invert_x {
+            opt |= MOUSE_OPTION_INV_X;
         }
+        if self.config.invert_y {
+            opt |= MOUSE_OPTION_INV_Y;
+        }
+        if self.config.swap_xy {
+            opt |= MOUSE_OPTION_SWAP_XY;
+        }
+        self.unprotect().await?;
+        let result = self.update_reg(PAW3222_MOUSE_OPTION, MOUSE_OPTION_MASK, opt).await;
+        self.protect().await?;
+        result?;
 
         self.set_force_awake(self.config.force_awake).await?;
 
@@ -547,6 +567,16 @@ mod tests {
         // Beyond eight bits, which is the whole point.
         assert_eq!(assemble_deltas(0x00, 0x00, 0x12), (0x100, 0x200));
         assert_eq!(assemble_deltas(0xff, 0xff, 0x7f), (0x7ff, -1));
+    }
+
+    /// Every bit the driver writes to MOUSE_OPTION is one the datasheet defines.
+    #[test]
+    fn mouse_option_bits_match_the_datasheet() {
+        assert_eq!(MOUSE_OPTION_XY12BIT_ENH, 0b0000_0100);
+        assert_eq!(MOUSE_OPTION_INV_X, 0b0000_1000);
+        assert_eq!(MOUSE_OPTION_INV_Y, 0b0001_0000);
+        assert_eq!(MOUSE_OPTION_SWAP_XY, 0b0010_0000);
+        assert_eq!(MOUSE_OPTION_MASK, 0b0011_1100);
     }
 
     /// The register takes `cpi / 38` in a field the datasheet limits to

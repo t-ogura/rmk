@@ -68,6 +68,7 @@ pub(crate) fn expand_paw3222_device(
         let res_cpi: i16 = sensor.cpi.map(|c| c as i16).unwrap_or(-1);
         let invert_x = sensor.invert_x;
         let invert_y = sensor.invert_y;
+        let swap_xy = sensor.swap_xy;
         let proc_invert_x = sensor.proc_invert_x;
         let proc_invert_y = sensor.proc_invert_y;
         let proc_swap_xy = sensor.proc_swap_xy;
@@ -117,6 +118,7 @@ pub(crate) fn expand_paw3222_device(
                         res_cpi: #res_cpi,
                         invert_x: #invert_x,
                         invert_y: #invert_y,
+                        swap_xy: #swap_xy,
                         force_awake: #force_awake,
                     };
 
@@ -140,6 +142,7 @@ pub(crate) fn expand_paw3222_device(
                         res_cpi: #res_cpi,
                         invert_x: #invert_x,
                         invert_y: #invert_y,
+                        swap_xy: #swap_xy,
                         force_awake: #force_awake,
                     };
 

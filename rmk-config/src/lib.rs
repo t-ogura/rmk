@@ -1201,6 +1201,9 @@ pub struct Paw3222Config {
     /// Invert Y axis at the sensor
     #[serde(default)]
     pub invert_y: bool,
+    /// Swap X and Y axes at the sensor
+    #[serde(default)]
+    pub swap_xy: bool,
     /// Force awake mode (disable power saving)
     #[serde(default)]
     pub force_awake: bool,

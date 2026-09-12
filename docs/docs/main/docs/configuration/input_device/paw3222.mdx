@@ -32,20 +32,20 @@ report_hz = 125 # Optional: Report rate in Hz
 
 force_awake = false
 cpi = 800 # Optional: 608-4826, in steps of 38. Omit to keep the sensor's own default.
-# invert axis on a sensor level (the MOUSE_OPTION register)
+# invert / swap axis on a sensor level (the MOUSE_OPTION register)
 invert_x = true
 # invert_y = true
+# swap_xy = true
 # invert / swap axis in software (in PointingProcessor)
 # proc_invert_x = true
 # proc_invert_y = true
 # proc_swap_xy = true
 ```
 
-The sensor has no axis-swap register, so `swap_xy` is available only as
-`proc_swap_xy`, in the processor.
-
-Deltas are read as 12-bit values (`DELTA_X`/`DELTA_Y` plus `DELTA_XY_HI`), and
-a sample whose `MOTION` overflow flags are set is dropped rather than reported.
+Deltas are read as 12-bit values (`DELTA_X`/`DELTA_Y` plus `DELTA_XY_HI`). The
+driver switches the sensor into 12-bit mode itself (`MOUSE_OPTION` bit 2; the
+part powers up in 8-bit mode, where deltas saturate at ±127), and a sample whose
+`MOTION` overflow flags are set is dropped rather than reported.
 
 `force_awake` keeps the sensor in Run mode (~0.25 mA on the datasheet) instead
 of letting it drop to Sleep1 (16 uA, sampling every 32 ms after 256 ms idle)
@@ -101,6 +101,7 @@ let paw3222_config = Paw3222Config {
     // force_awake: true,
     // invert_x: true,
     // invert_y: true,
+    // swap_xy: true,
     ..Default::default()
 };
 
