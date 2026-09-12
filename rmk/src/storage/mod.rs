@@ -439,6 +439,7 @@ impl<F: AsyncNorFlash, const ROW: usize, const COL: usize, const NUM_LAYER: usiz
     }
 
     async fn store_data(&mut self, key: StorageKey, data: &StorageData) -> Result<(), SSError<F::Error>> {
+        crate::boot_phase::pet_stale_watchdog();
         self.flash.store_item(&mut self.buffer, &key, data).await
     }
 
@@ -513,6 +514,7 @@ impl<F: AsyncNorFlash, const ROW: usize, const COL: usize, const NUM_LAYER: usiz
         if !enabled || storage_config.clear_storage {
             // Clear storage first
             debug!("Clearing storage!");
+            crate::boot_phase::pet_stale_watchdog();
             let _ = storage.flash.erase_all().await;
 
             // Initialize storage from keymap and config

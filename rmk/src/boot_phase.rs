@@ -29,3 +29,20 @@ pub static BOOT_PHASE: AtomicU8 = AtomicU8::new(CHIP_INIT);
 pub(crate) fn stamp(phase: u8) {
     BOOT_PHASE.store(phase, Ordering::Release);
 }
+
+/// Reload a watchdog left running by the previous boot.
+///
+/// An nRF52 watchdog is not stopped by a reset-button or software reset, so
+/// after one it keeps counting down through the next boot's initialisation,
+/// which nothing feeds until the tasks are up. Storage initialisation on a
+/// fresh build is a few hundred MPSL-scheduled flash writes -- long enough
+/// for the dog to bite mid-way, over and over, each attempt getting a little
+/// further. Reloading from the write path keeps the window open while that
+/// work is in progress. On a watchdog that is not running the write is
+/// ignored; on other chips this is a no-op.
+pub(crate) fn pet_stale_watchdog() {
+    #[cfg(feature = "_nrf_ble")]
+    embassy_nrf::pac::WDT
+        .rr(0)
+        .write(|w| w.set_rr(embassy_nrf::pac::wdt::vals::Rr::Reload));
+}
