@@ -31,8 +31,10 @@
 //! Power: the datasheet gives ~0.25 mA average in Run, 16 uA in Sleep1 and
 //! 7 uA in Sleep2 (both enabled by default), so `force_awake` is a real cost on
 //! a battery. With 12-bit deltas it is not needed for tracking either: Sleep1
-//! samples every 32 ms and Sleep2 every 128 ms, and even the slower window
-//! cannot overflow +-2047 counts at the sensor's rated 30 ips.
+//! samples every 32 ms, which at the default 1026 CPI and the rated 30 ips is
+//! under 1000 counts, well inside +-2047. Sleep2's 128 ms window can still
+//! overflow at the very top of that speed range, and that is what the overflow
+//! flags are for -- the sample is dropped instead of reported wrapped.
 //!
 //! SPI is mode 3 (CPOL=1, CPHA=1), MSB first, up to 2 MHz — which is what
 //! [`BitBangSpiBus`] produces: it idles SCK high, moves SDIO while SCK is high

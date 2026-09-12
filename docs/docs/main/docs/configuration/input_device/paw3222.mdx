@@ -50,8 +50,9 @@ a sample whose `MOTION` overflow flags are set is dropped rather than reported.
 `force_awake` keeps the sensor in Run mode (~0.25 mA on the datasheet) instead
 of letting it drop to Sleep1 (16 uA, sampling every 32 ms after 256 ms idle)
 and Sleep2 (7 uA, every 128 ms after 20 s). Leave it off on a battery: with
-12-bit deltas neither sleep window overflows at the sensor's rated speed, so
-the only thing it buys is up to one sleep sampling period of wake-up latency.
+12-bit deltas the Sleep1 window cannot overflow at the sensor's rated speed and
+an overflowed Sleep2 sample is flagged and dropped, so the only thing it buys
+is up to one sleep sampling period of wake-up latency.
 
 CPI is written as `cpi / 38` into a register field the datasheet limits to
 16..=127, which is where the 608..=4826 range comes from. A value outside it is
