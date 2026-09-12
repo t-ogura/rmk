@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Poll the pending report before the motion pin in `PointingDevice`: with a level-triggered motion pin, fast movement kept the pin ready at every poll and the report was never polled, so the host saw nothing until the user slowed down
+- Keep mouse report axes within the HID descriptor's -127..127 (a -128 is out of the declared range and a host may drop that axis, which on a fast move looked like the cursor freezing), and carry motion a report could not fit into the following reports in Scroll and Sniper modes instead of dropping it
+- Count pointing motion as activity for the split central's idle sleep, so mouse-only use no longer relaxes the split links to their sleep parameters mid-session
 - Keep other physically held one-shot modifiers active when one is released
 - Preserve unresolved keys from unrelated combos when another combo triggers, instead of silently discarding their press events
 - Identify the keyboard's HID report characteristics on the dongle by their Report Reference descriptor instead of `HidService`'s declaration order.

@@ -564,6 +564,14 @@ impl<'a> PointingProcessor<'a> {
             return;
         }
 
+        // Motion is user activity as much as a key press is. Without this a
+        // central with `split_central_sleep_timeout_seconds` set would relax its
+        // split links to the sleep parameters (a multi-second effective interval)
+        // in the middle of mouse-only use, and typing would lag until a key
+        // press woke it.
+        #[cfg(feature = "_ble")]
+        crate::ble::sleep::report_activity();
+
         let mut x = 0i16;
         let mut y = 0i16;
 
@@ -684,10 +692,14 @@ impl<'a> PointingProcessor<'a> {
     // pointing device events are used to change the mode (cursor/scroll/sniper) of the processor based on the device id. This allows users to trigger different modes if desired.
     pub async fn on_pointing_processor_event(&mut self, event: PointingProcessorEvent) {
         if self.config.device_id == ALL_POINTING_DEVICES || self.config.device_id == event.device_id {
-            debug!(
-                "PointingProcessor {}: setting mode to {:?}",
-                self.config.device_id, event.mode
-            );
+            // A controller may re-announce the current mode; only a change is
+            // worth a line, or a periodic announcement floods a small log buffer.
+            if event.mode != self.current_mode {
+                debug!(
+                    "PointingProcessor {}: setting mode to {:?}",
+                    self.config.device_id, event.mode
+                );
+            }
             self.set_pointing_mode(event.mode);
         }
     }
