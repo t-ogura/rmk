@@ -26,6 +26,7 @@
 //! [`BitBangSpiBus`] produces: it idles SCK high, moves SDIO while SCK is high
 //! and samples on the rising edge.
 
+use embassy_futures::yield_now;
 use embassy_time::{Duration, Timer};
 use embedded_hal::digital::{InputPin, OutputPin};
 use embedded_hal_async::digital::Wait;
@@ -355,12 +356,22 @@ where
 
     async fn read_motion(&mut self) -> Result<MotionData, PointingDriverError> {
         let status = self.read_reg(PAW3222_MOTION).await?;
-        if (status & MOTION_STATUS_MOTION) == 0 {
-            return Ok(MotionData::default());
-        }
+        let motion = if (status & MOTION_STATUS_MOTION) == 0 {
+            MotionData::default()
+        } else {
+            let (dx, dy) = self.read_xy().await?;
+            MotionData { dx, dy }
+        };
 
-        let (dx, dy) = self.read_xy().await?;
-        Ok(MotionData { dx, dy })
+        // Nothing above this line ever suspends -- the bit-banged transfers are
+        // synchronous loops, and the delays that used to punctuate them are gone.
+        // The caller polls on the motion pin, which reads ready the moment the
+        // sensor has data, so without a yield here a pin stuck low would spin
+        // this task forever and starve the rest of the firmware. Yield outside
+        // the CS assertion, where handing the CPU over costs nothing.
+        yield_now().await;
+
+        Ok(motion)
     }
 
     /// Check if motion is pending (motion GPIO is active low)
