@@ -239,12 +239,16 @@ impl<S: PointingDriver> PointingDevice<S> {
                 }
             };
 
-            match select(poll_wait, report_wait).await {
-                Either::First(_) => {
+            // `select` returns its first ready argument without polling the
+            // second, and during fast movement the motion pin is always ready --
+            // so the report goes first, or it is never polled at all. It is
+            // `pending` unless motion is accumulated and the interval is up.
+            match select(report_wait, poll_wait).await {
+                Either::Second(_) => {
                     self.poll_once().await;
                     self.last_poll = Instant::now();
                 }
-                Either::Second(_) => {
+                Either::First(_) => {
                     if let Some(event) = self.take_report_event() {
                         self.last_report = Instant::now();
                         return event;
