@@ -101,7 +101,6 @@ where
         rmk_config: RmkConfig<'static>,
         #[cfg(feature = "split")] peripheral_matrices: [PeripheralMatrixConfig; crate::SPLIT_PERIPHERALS_NUM],
     ) -> Self {
-        crate::boot_phase::stamp(crate::boot_phase::BLE_READY);
         Self {
             controller: Some(controller),
             address,

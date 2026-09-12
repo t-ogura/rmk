@@ -82,7 +82,6 @@ use crate::config::PositionalConfig;
 #[cfg(feature = "_ble")]
 pub mod ble;
 pub mod boot;
-pub mod boot_phase;
 pub mod channel;
 pub mod config;
 pub mod core_traits;
@@ -163,14 +162,10 @@ pub async fn initialize_keymap_and_storage<
             } else {
                 None
             };
-            crate::boot_phase::stamp(crate::boot_phase::STORAGE_ENTER);
-            let storage = Storage::new(flash, &data.keymap, &encoder_opt, storage_config, behavior_config).await;
-            crate::boot_phase::stamp(crate::boot_phase::STORAGE_DONE);
-            storage
+            Storage::new(flash, &data.keymap, &encoder_opt, storage_config, behavior_config).await
         };
 
         let keymap = KeyMap::new_from_storage(data, Some(&mut storage), behavior_config, positional_config).await;
-        crate::boot_phase::stamp(crate::boot_phase::KEYMAP_LOADED);
         (keymap, storage)
     }
 

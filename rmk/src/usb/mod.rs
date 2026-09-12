@@ -266,7 +266,6 @@ pub struct UsbTransport<'a, D: Driver<'static>, S = ()> {
 
 impl<'a, D: Driver<'static>> UsbTransport<'a, D> {
     pub fn new(driver: D, device_config: DeviceConfig<'static>) -> Self {
-        crate::boot_phase::stamp(crate::boot_phase::USB_READY);
         UsbTransportBuilder::new(driver, device_config, default_config_descriptor()).build()
     }
 
