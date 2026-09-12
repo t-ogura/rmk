@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Let a user crate that forwards rmk features through its own `[features]` name them in an `RMK_FEATURES` environment variable (`cargo:rustc-env` from its build script), so the feature/`[host]` consistency check sees them
 - Make Trouble BLE roles explicit, document environment-variable memory tuning, update the nRF52832 examples to peripheral-only SDC, and derive split notification capacity from Trouble's configured packet-pool MTU.
 - Publish the dongle's state.
 
