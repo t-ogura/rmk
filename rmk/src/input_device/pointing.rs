@@ -239,12 +239,20 @@ impl<S: PointingDriver> PointingDevice<S> {
                 }
             };
 
-            match select(poll_wait, report_wait).await {
-                Either::First(_) => {
+            // `select` polls its first argument first and returns without
+            // touching the second one if it is already ready, so the report has
+            // to come first. A level-triggered motion pin reads ready the
+            // instant the sensor has data, and during fast movement it is low
+            // again by the next poll -- put the poll first and the report is
+            // never even polled, so the host sees nothing at all until the user
+            // slows down. The report is `pending` unless motion is accumulated
+            // and its interval has elapsed, so this costs the poll nothing.
+            match select(report_wait, poll_wait).await {
+                Either::Second(_) => {
                     self.poll_once().await;
                     self.last_poll = Instant::now();
                 }
-                Either::Second(_) => {
+                Either::First(_) => {
                     if let Some(event) = self.take_report_event() {
                         self.last_report = Instant::now();
                         return event;

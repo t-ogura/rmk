@@ -127,8 +127,24 @@ impl<'a, 'k> AutoMouseLayerRunner<'a, 'k> {
     }
 
     async fn on_layer_change_event(&mut self, LayerChangeEvent(top): LayerChangeEvent) {
-        // Layer turned off externally (MO/TG key etc.) — release our hold.
+        // An excluded layer just came up under a layer we are holding. Step
+        // aside now rather than at the timeout: the user reached for a layer
+        // that wants the pointing device, and waiting out `timeout` would leave
+        // them with the wrong keymap and the wrong pointing mode meanwhile.
         let keymap = self.keymap;
+        for entry in self.entries.iter_mut() {
+            if entry.self_activated
+                && entry
+                    .config
+                    .exclude_layers
+                    .iter()
+                    .any(|&layer| keymap.is_layer_active(layer))
+            {
+                keymap.deactivate_layer_if_active(entry.config.target_layer);
+            }
+        }
+
+        // Layer turned off externally (MO/TG key etc.) — release our hold.
         for entry in self.entries.iter_mut() {
             if entry.self_activated && !keymap.is_layer_active(entry.config.target_layer) {
                 entry.self_activated = false;
