@@ -207,6 +207,14 @@ pub struct Paw3222<SPI: SpiBus, CS: OutputPin, MOTION: InputPin + Wait> {
     cs: CS,
     motion_gpio: Option<MOTION>,
     config: Paw3222Config,
+    /// `MOUSE_OPTION` read back after init reported `XY12bit_Enh` set.
+    ///
+    /// Register writes on this bus have no other witness, so the driver does
+    /// not assume its own write landed. When it did not, the sensor is in its
+    /// power-on 8-bit mode: `DELTA_XY_HI` is meaningless and the overflow
+    /// flags fire on every brisk sample, so both are ignored rather than
+    /// letting the cursor stall at speed.
+    twelve_bit: bool,
 }
 
 impl<SPI: SpiBus, CS: OutputPin, MOTION: InputPin + Wait> Paw3222<SPI, CS, MOTION> {
@@ -218,6 +226,7 @@ impl<SPI: SpiBus, CS: OutputPin, MOTION: InputPin + Wait> Paw3222<SPI, CS, MOTIO
             cs,
             motion_gpio,
             config,
+            twelve_bit: false,
         }
     }
 
@@ -278,7 +287,11 @@ impl<SPI: SpiBus, CS: OutputPin, MOTION: InputPin + Wait> Paw3222<SPI, CS, MOTIO
         let _ = self.cs.set_high();
 
         let [status, x_low, y_low, hi] = regs;
-        let (dx, dy) = assemble_deltas(x_low, y_low, hi);
+        let (dx, dy) = if self.twelve_bit {
+            assemble_deltas(x_low, y_low, hi)
+        } else {
+            (x_low as i8 as i16, y_low as i8 as i16)
+        };
         Ok((status, dx, dy))
     }
 
@@ -353,6 +366,20 @@ impl<SPI: SpiBus, CS: OutputPin, MOTION: InputPin + Wait> Paw3222<SPI, CS, MOTIO
         self.protect().await?;
         result?;
 
+        let readback = self.read_reg(PAW3222_MOUSE_OPTION).await?;
+        self.twelve_bit = (readback & MOUSE_OPTION_XY12BIT_ENH) != 0;
+        if self.twelve_bit {
+            info!(
+                "PAW3222 {}: 12-bit mode confirmed (MOUSE_OPTION {:#04x})",
+                self.id, readback
+            );
+        } else {
+            warn!(
+                "PAW3222 {}: MOUSE_OPTION write did not take ({:#04x}), staying in 8-bit mode",
+                self.id, readback
+            );
+        }
+
         self.set_force_awake(self.config.force_awake).await?;
 
         // Drain whatever accumulated during reset, so the first reported motion
@@ -403,10 +430,12 @@ where
 
         let motion = if (status & MOTION_STATUS_MOTION) == 0 {
             MotionData::default()
-        } else if (status & MOTION_STATUS_OVF) != 0 {
-            // The sensor's own buffer wrapped since the last read, so these
-            // deltas are garbage; reporting them would move the cursor by a
-            // wrapped, wrong-signed amount. One dropped frame is invisible.
+        } else if self.twelve_bit && (status & MOTION_STATUS_OVF) != 0 {
+            // In 12-bit mode the sensor's own buffer wrapped since the last
+            // read, so these deltas are garbage; reporting them would move the
+            // cursor by a wrapped, wrong-signed amount. One dropped frame is
+            // invisible. In 8-bit mode the same flags merely say a brisk sample
+            // saturated at +-127, and the value is still the best available.
             warn!(
                 "PAW3222 {}: delta overflow, sample dropped (status {:#04x})",
                 self.id, status
