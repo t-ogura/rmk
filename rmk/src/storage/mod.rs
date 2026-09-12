@@ -508,7 +508,9 @@ impl<F: AsyncNorFlash, const ROW: usize, const COL: usize, const NUM_LAYER: usiz
         };
 
         // Check whether keymap and configs have been storaged in flash
-        if !storage.check_enable().await || storage_config.clear_storage {
+        let enabled = storage.check_enable().await;
+        crate::boot_phase::stamp(crate::boot_phase::STORAGE_CHECKED);
+        if !enabled || storage_config.clear_storage {
             // Clear storage first
             debug!("Clearing storage!");
             let _ = storage.flash.erase_all().await;
@@ -938,11 +940,17 @@ mod tests {
 
     struct TestFlash<const SIZE: usize, const ERASE_SIZE: usize, const WRITE_SIZE: usize> {
         bytes: [u8; SIZE],
+        /// Number of `write` calls, so a test can tell "nothing to do" from
+        /// "rewrote everything" -- on nRF each one is an MPSL timeslot.
+        writes: usize,
     }
 
     impl<const SIZE: usize, const ERASE_SIZE: usize, const WRITE_SIZE: usize> TestFlash<SIZE, ERASE_SIZE, WRITE_SIZE> {
         fn new() -> Self {
-            Self { bytes: [0xFF; SIZE] }
+            Self {
+                bytes: [0xFF; SIZE],
+                writes: 0,
+            }
         }
     }
 
@@ -981,6 +989,7 @@ mod tests {
         }
 
         fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
+            self.writes += 1;
             let start = offset as usize;
             let end = start + bytes.len();
             for (dst, src) in self.bytes[start..end].iter_mut().zip(bytes.iter()) {
@@ -1089,6 +1098,80 @@ mod tests {
         assert!(matches!(FLASH_CHANNEL.try_receive(), Ok(FlashOperationMessage::Flush)));
         FLUSHED.signal(true);
         assert!(matches!(write.as_mut().poll(&mut cx), Poll::Ready(true)));
+    }
+
+    /// A boot with `clear_layout` and an unchanged keymap must not rewrite it:
+    /// on nRF every write is an MPSL timeslot, and a full keymap of them is
+    /// ~20 s before the first task runs.
+    #[test]
+    #[cfg(feature = "host")]
+    fn clear_layout_writes_nothing_when_the_keymap_is_unchanged() {
+        use rmk_types::action::Action;
+        use rmk_types::keycode::{HidKeyCode, KeyCode};
+
+        block_on(async {
+            type Flash = TestFlash<32_768, 4_096, 1>;
+            const ROW: usize = 4;
+            const COL: usize = 7;
+            const LAYER: usize = 2;
+
+            let mut keymap = [[[KeyAction::No; COL]; ROW]; LAYER];
+            for (l, layer) in keymap.iter_mut().enumerate() {
+                for (r, row) in layer.iter_mut().enumerate() {
+                    for (c, key) in row.iter_mut().enumerate() {
+                        let code = KeyCode::Hid(HidKeyCode::A);
+                        *key = match (l + r + c) % 3 {
+                            0 => KeyAction::Single(Action::Key(code)),
+                            1 => KeyAction::TapHold(Action::Key(code), Action::LayerOn(1), u8::MAX),
+                            _ => KeyAction::Transparent,
+                        };
+                    }
+                }
+            }
+            let encoder_map: Option<&mut [[EncoderAction; 0]; LAYER]> = None;
+            let config = RuntimeStorageConfig {
+                clear_layout: true,
+                ..RuntimeStorageConfig::default()
+            };
+
+            // First boot: storage is empty, everything is written.
+            let storage = Storage::<Flash, ROW, COL, LAYER, 0>::new(
+                Flash::new(),
+                &keymap,
+                &encoder_map,
+                &config,
+                &RuntimeBehaviorConfig::default(),
+            )
+            .await;
+            let (flash, _) = storage.flash.destroy();
+            let first_boot_writes = flash.writes;
+            assert!(first_boot_writes > ROW * COL * LAYER, "first boot writes the keymap");
+
+            // Second boot, same keymap: the sync must find nothing to change.
+            let mut flash = flash;
+            flash.writes = 0;
+            let mut storage = Storage::<Flash, ROW, COL, LAYER, 0>::new(
+                flash,
+                &keymap,
+                &encoder_map,
+                &config,
+                &RuntimeBehaviorConfig::default(),
+            )
+            .await;
+            let stored = storage
+                .fetch_data(StorageKey::keymap(0, 1, 2))
+                .await
+                .expect("keymap entry is stored");
+            assert!(matches!(stored, StorageData::KeyAction(a) if a == keymap[0][1][2]));
+            let (flash, _) = storage.flash.destroy();
+            // Only LayoutConfig and BehaviorConfig are rewritten: a handful of
+            // flash writes, nowhere near one per key.
+            assert!(
+                flash.writes < ROW * COL,
+                "second boot rewrote the keymap: {} writes",
+                flash.writes
+            );
+        });
     }
 
     #[test]
