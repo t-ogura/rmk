@@ -49,7 +49,7 @@
 //! and samples on the rising edge.
 
 use embassy_futures::yield_now;
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use embedded_hal::digital::{InputPin, OutputPin};
 use embedded_hal_async::digital::Wait;
 use embedded_hal_async::spi::SpiBus;
@@ -121,6 +121,11 @@ const PROBE_RETRY_DELAY_MS: u64 = 100;
 // the executor several such windows *while CS is still asserted*, so a BLE or
 // USB task can stretch one motion read past the sensor's next frame. The
 // deltas then saturate and the cursor moves in steps.
+
+/// A motion burst is four registers, ~100 us on the bit-banged bus. Anything
+/// well past that means the transfer was preempted mid-way (see `read_motion`).
+/// embassy-time's tick is 30 us on a 32 kHz RTC, so the bound is coarse.
+const BURST_MAX: Duration = Duration::from_micros(400);
 
 // Resolution constants: the register takes `cpi / RES_STEP`, valid 16..=127.
 const RES_STEP: u16 = 38;
@@ -448,9 +453,24 @@ where
     }
 
     async fn read_motion(&mut self) -> Result<MotionData, PointingDriverError> {
+        let started = Instant::now();
         let (status, dx, dy) = self.read_motion_burst().await?;
+        let took = started.elapsed();
 
         let motion = if (status & MOTION_STATUS_MOTION) == 0 {
+            MotionData::default()
+        } else if took > BURST_MAX {
+            // Something -- the radio, in practice -- ran in the middle of the
+            // transfer. The sensor keeps producing frames meanwhile, so the low
+            // bytes and the high nibbles can now describe different frames, and
+            // a wrong high nibble is a 256-count jump. The deltas were cleared
+            // by the read either way; losing this one frame is invisible,
+            // reporting it is not.
+            trace!(
+                "PAW3222 {}: burst took {} us, sample dropped",
+                self.id,
+                took.as_micros()
+            );
             MotionData::default()
         } else {
             // DXOVF/DYOVF are reported but never acted on. On hardware they

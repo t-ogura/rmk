@@ -9,7 +9,10 @@ use postcard::experimental::max_size::MaxSize;
 use rmk_types::connection::ConnectionType;
 use rmk_types::morse::MorseProfile;
 use sequential_storage::Error as SSError;
-use sequential_storage::cache::{Cache, Uncached};
+use sequential_storage::cache::Cache;
+use sequential_storage::cache::key_pointers::ArrayKeyPointers;
+use sequential_storage::cache::page_pointers::ArrayPagePointers;
+use sequential_storage::cache::page_states::ArrayPageStates;
 use sequential_storage::map::{Key, MapConfig, MapStorage, PostcardValue, SerializationError};
 #[cfg(feature = "host")]
 use {
@@ -379,7 +382,23 @@ pub async fn new_storage_without_keymap<F: AsyncNorFlash>(
     .await
 }
 
-type StorageCache = Cache<Uncached, Uncached, Uncached, StorageKey>;
+/// Upper bound on `[storage] num_sectors`; the cache arrays are sized for it.
+const STORAGE_PAGES_MAX: usize = 64;
+/// Distinct keys the cache can point at: a full keymap (layers x rows x cols)
+/// plus encoders, the config records and peer addresses.
+const STORAGE_KEYS_MAX: usize = 1024;
+
+/// The map is searched uncached otherwise, and a search walks every item on
+/// every page from the newest back until the key turns up. With a few hundred
+/// keys, and stale copies of each accumulating until a page is recycled, the
+/// ~300 reads a boot makes took 8-20 s on an nRF52840 -- all of it before the
+/// first task runs. The key-pointer cache makes a fetch one read.
+type StorageCache = Cache<
+    ArrayPageStates<STORAGE_PAGES_MAX>,
+    ArrayPagePointers<STORAGE_PAGES_MAX>,
+    ArrayKeyPointers<StorageKey, STORAGE_KEYS_MAX>,
+    StorageKey,
+>;
 
 pub struct Storage<
     F: AsyncNorFlash,
@@ -435,6 +454,11 @@ impl<F: AsyncNorFlash, const ROW: usize, const COL: usize, const NUM_LAYER: usiz
             storage_config.num_sectors >= 2,
             "Number of used sector for storage must larger than 1"
         );
+        assert!(
+            storage_config.num_sectors as usize <= STORAGE_PAGES_MAX,
+            "Storage cache is sized for at most {} sectors",
+            STORAGE_PAGES_MAX
+        );
 
         // If config.start_addr == 0:
         // - For nRF chips: use sectors starting at 0x0006_0000
@@ -471,7 +495,15 @@ impl<F: AsyncNorFlash, const ROW: usize, const COL: usize, const NUM_LAYER: usiz
         };
 
         let mut storage = Self {
-            flash: MapStorage::new(flash, MapConfig::new(storage_range), Cache::new_uncached()),
+            flash: MapStorage::new(
+                flash,
+                MapConfig::new(storage_range),
+                Cache::new(
+                    ArrayPageStates::new(),
+                    ArrayPagePointers::new(),
+                    ArrayKeyPointers::new(),
+                ),
+            ),
             buffer: [0; get_buffer_size()],
         };
 
