@@ -1149,6 +1149,7 @@ pub struct InputDeviceConfig {
     pub encoder: Option<Vec<EncoderConfig>>,
     pub pointing: Option<Vec<PointingDeviceConfig>>,
     pub joystick: Option<Vec<JoystickConfig>>,
+    pub paw3222: Option<Vec<Paw3222Config>>,
     pub pmw3610: Option<Vec<Pmw3610Config>>,
     pub pmw33xx: Option<Vec<Pmw33xxConfig>>,
     pub iqs5xx: Option<Vec<Iqs5xxConfig>>,
@@ -1171,6 +1172,46 @@ pub struct JoystickConfig {
     pub transform: Vec<Vec<i16>>,
     pub bias: Vec<i16>,
     pub resolution: u16,
+}
+
+/// PAW3222 optical mouse sensor configuration
+///
+/// Same single-wire (SDIO) half-duplex SPI as the PMW3610, so `spi.mosi` and
+/// `spi.miso` must name the same pin (or one of them may be left empty).
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Paw3222Config {
+    /// Name of the sensor (used for variable naming)
+    pub name: String,
+    /// id of the device
+    pub id: Option<u8>,
+    /// SPI pins
+    pub spi: SpiConfig,
+    /// Optional motion interrupt pin
+    pub motion: Option<String>,
+    /// CPI resolution (608-4826, step 38). Optional, uses sensor default if not set.
+    pub cpi: Option<u16>,
+    /// Invert X axis at the sensor
+    #[serde(default)]
+    pub invert_x: bool,
+    /// Invert Y axis at the sensor
+    #[serde(default)]
+    pub invert_y: bool,
+    /// Force awake mode (disable power saving)
+    #[serde(default)]
+    pub force_awake: bool,
+    /// Report rate (Hz). Motion will be accumulated and emitted at this rate.
+    #[serde(default = "default_pointing_report_hz")]
+    pub report_hz: u16,
+    /// Invert X axis in the PointingProcessor
+    #[serde(default)]
+    pub proc_invert_x: bool,
+    /// Invert Y axis in the PointingProcessor
+    #[serde(default)]
+    pub proc_invert_y: bool,
+    /// Swap X and Y axes in the PointingProcessor
+    #[serde(default)]
+    pub proc_swap_xy: bool,
 }
 
 /// PMW3610 optical mouse sensor configuration

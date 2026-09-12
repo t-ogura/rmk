@@ -1,6 +1,7 @@
 use adc::expand_adc_device;
 use encoder::expand_encoder_device;
 use iqs5xx::expand_iqs5xx_device;
+use paw3222::expand_paw3222_device;
 use pmw33xx::expand_pmw33xx_device;
 use pmw3610::expand_pmw3610_device;
 use proc_macro2::{Ident, TokenStream};
@@ -13,6 +14,7 @@ use rmk_config::resolved::hardware::{
 pub(crate) mod adc;
 pub(crate) mod encoder;
 pub(crate) mod iqs5xx;
+pub(crate) mod paw3222;
 pub(crate) mod pmw33xx;
 pub(crate) mod pmw3610;
 
@@ -137,6 +139,58 @@ pub(crate) fn expand_input_device_config(
         initialization.extend(initializer.initializer);
         let processor_name = initializer.var_name;
         processors.push(quote! { #processor_name });
+    }
+
+    // generate PAW3222 configuration
+    let (paw3222_device_initializers, paw3222_processor_initializers) = match board {
+        BoardConfig::UniBody(UniBodyConfig { input_device, .. }) => {
+            expand_paw3222_device(input_device.clone().paw3222.unwrap_or(Vec::new()), chip)
+        }
+        BoardConfig::Split(split_config) => expand_paw3222_device(
+            split_config
+                .central
+                .input_device
+                .clone()
+                .unwrap_or(InputDeviceConfig::default())
+                .paw3222
+                .unwrap_or(Vec::new()),
+            chip,
+        ),
+    };
+
+    for initializer in paw3222_device_initializers {
+        initialization.extend(initializer.initializer);
+        let device_name = initializer.var_name;
+        devices.push(quote! { #device_name });
+    }
+
+    for initializer in paw3222_processor_initializers {
+        initialization.extend(initializer.initializer);
+        let processor_name = initializer.var_name;
+        processors.push(quote! { #processor_name });
+    }
+
+    // For split keyboards, also generate processors for PAW3222 devices on peripherals
+    // The devices run on peripherals, but processors need to run on central to handle the events
+    if let BoardConfig::Split(split_config) = board {
+        for peripheral in &split_config.peripheral {
+            let peripheral_paw3222_config = peripheral
+                .input_device
+                .clone()
+                .unwrap_or(InputDeviceConfig::default())
+                .paw3222
+                .unwrap_or(Vec::new());
+
+            // Only generate processors (not devices) for peripheral PAW3222
+            let (_, peripheral_paw3222_processors) =
+                expand_paw3222_device(peripheral_paw3222_config, chip);
+
+            for initializer in peripheral_paw3222_processors {
+                initialization.extend(initializer.initializer);
+                let processor_name = initializer.var_name;
+                processors.push(quote! { #processor_name });
+            }
+        }
     }
 
     // generate PMW3610 configuration
