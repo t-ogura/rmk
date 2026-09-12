@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep a low-duty (30 ms per 600 ms) reconnect scan running while the split central sleeps, so a peripheral that wakes up later rejoins on its own; a sleeping central used to stop looking for its peripherals until something on the central itself woke it
 - Keep other physically held one-shot modifiers active when one is released
 - Preserve unresolved keys from unrelated combos when another combo triggers, instead of silently discarding their press events
 - Identify the keyboard's HID report characteristics on the dongle by their Report Reference descriptor instead of `HidService`'s declaration order.
