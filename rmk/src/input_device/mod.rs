@@ -10,6 +10,7 @@ pub mod adc;
 pub mod battery;
 pub mod iqs5xx;
 pub mod joystick;
+pub mod paw3222;
 pub mod pmw33xx;
 pub mod pmw3610;
 pub mod pointing;

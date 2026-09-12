@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add a PAW3222 optical mouse sensor driver (`[[input_device.paw3222]]`, single-wire bit-banged SPI on nRF52 and RP2040), reading 12-bit deltas with the sensor's power-saving modes left on
 - Make Trouble BLE roles explicit, document environment-variable memory tuning, update the nRF52832 examples to peripheral-only SDC, and derive split notification capacity from Trouble's configured packet-pool MTU.
 - Publish the dongle's state.
 
