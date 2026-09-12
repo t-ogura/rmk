@@ -178,6 +178,16 @@ impl From<Paw3222Error> for PointingDriverError {
     }
 }
 
+/// Chip-select guard time: tNCS-LEAD (CS low to first SCK) and tNCS-LAG (last
+/// SCK to CS high) are 1 us minimum, tNCS-HI between transactions 2 us. This
+/// spins for a few microseconds on any core from 16 MHz up.
+#[inline(always)]
+fn ncs_delay() {
+    for _ in 0..64 {
+        core::hint::spin_loop();
+    }
+}
+
 /// Sign-extend the sensor's two's-complement delta, whose sign bit is at `bits`.
 fn sign_extend(value: u16, bits: usize) -> i16 {
     let sign_bit = 1u16 << bits;
@@ -232,26 +242,32 @@ impl<SPI: SpiBus, CS: OutputPin, MOTION: InputPin + Wait> Paw3222<SPI, CS, MOTIO
 
     async fn read_reg(&mut self, addr: u8) -> Result<u8, Paw3222Error> {
         let _ = self.cs.set_low();
+        ncs_delay();
 
         self.spi.write(&[addr & 0x7f]).await.map_err(|_| Paw3222Error::Spi)?;
 
         let mut value = [0u8];
         self.spi.read(&mut value).await.map_err(|_| Paw3222Error::Spi)?;
 
+        ncs_delay();
         let _ = self.cs.set_high();
+        ncs_delay();
 
         Ok(value[0])
     }
 
     async fn write_reg(&mut self, addr: u8, value: u8) -> Result<(), Paw3222Error> {
         let _ = self.cs.set_low();
+        ncs_delay();
 
         self.spi
             .write(&[addr | SPI_WRITE, value])
             .await
             .map_err(|_| Paw3222Error::Spi)?;
 
+        ncs_delay();
         let _ = self.cs.set_high();
+        ncs_delay();
 
         Ok(())
     }
@@ -272,6 +288,7 @@ impl<SPI: SpiBus, CS: OutputPin, MOTION: InputPin + Wait> Paw3222<SPI, CS, MOTIO
     /// delta registers behind it.
     async fn read_motion_burst(&mut self) -> Result<(u8, i16, i16), Paw3222Error> {
         let _ = self.cs.set_low();
+        ncs_delay();
 
         let mut regs = [0u8; 4];
         for (value, addr) in
@@ -284,7 +301,9 @@ impl<SPI: SpiBus, CS: OutputPin, MOTION: InputPin + Wait> Paw3222<SPI, CS, MOTIO
             *value = byte[0];
         }
 
+        ncs_delay();
         let _ = self.cs.set_high();
+        ncs_delay();
 
         let [status, x_low, y_low, hi] = regs;
         let (dx, dy) = if self.twelve_bit {
@@ -418,7 +437,9 @@ where
     type MOTION = MOTION;
 
     async fn init(&mut self) -> Result<(), PointingDriverError> {
+        ncs_delay();
         let _ = self.cs.set_high();
+        ncs_delay();
         Timer::after(Duration::from_millis(1)).await;
 
         self.configure().await?;

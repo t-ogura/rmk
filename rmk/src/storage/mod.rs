@@ -623,15 +623,20 @@ impl<F: AsyncNorFlash, const ROW: usize, const COL: usize, const NUM_LAYER: usiz
         self.store_data(StorageKey::BehaviorConfig, &StorageData::from(behavior))
             .await?;
 
+        // Only write what differs. A flash write on nRF goes through an MPSL
+        // timeslot -- session, request, a 7.5 ms slot, close -- and a stored
+        // item is two or three of them, so rewriting a full keymap costs on the
+        // order of 20 s at every boot, all of it before any task runs. A read
+        // needs no timeslot and is microseconds.
         // TODO: Generic reset for vial and other hosts
         for (layer, layer_data) in keymap.iter().enumerate() {
             for (row, row_data) in layer_data.iter().enumerate() {
                 for (col, action) in row_data.iter().enumerate() {
-                    self.store_data(
-                        StorageKey::keymap(layer as u8, row as u8, col as u8),
-                        &StorageData::KeyAction(*action),
-                    )
-                    .await?;
+                    let key = StorageKey::keymap(layer as u8, row as u8, col as u8);
+                    if matches!(self.fetch_data(key).await, Some(StorageData::KeyAction(stored)) if stored == *action) {
+                        continue;
+                    }
+                    self.store_data(key, &StorageData::KeyAction(*action)).await?;
                 }
             }
         }
@@ -640,11 +645,12 @@ impl<F: AsyncNorFlash, const ROW: usize, const COL: usize, const NUM_LAYER: usiz
         if let Some(encoder_map) = encoder_map {
             for (layer, layer_data) in encoder_map.iter().enumerate() {
                 for (idx, action) in layer_data.iter().enumerate() {
-                    self.store_data(
-                        StorageKey::encoder(idx as u8, layer as u8),
-                        &StorageData::EncoderAction(*action),
-                    )
-                    .await?;
+                    let key = StorageKey::encoder(idx as u8, layer as u8);
+                    if matches!(self.fetch_data(key).await, Some(StorageData::EncoderAction(stored)) if stored == *action)
+                    {
+                        continue;
+                    }
+                    self.store_data(key, &StorageData::EncoderAction(*action)).await?;
                 }
             }
         }

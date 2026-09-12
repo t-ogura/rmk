@@ -51,9 +51,15 @@ where
         Self { sck, sdio }
     }
 
+    /// One SCK phase. 12 spins is roughly 0.5-1 us on a 64 MHz Cortex-M4 and
+    /// about a quarter of that on a 125 MHz RP2040, which keeps every phase
+    /// above the 250 ns the PixArt parts require and the clock under their
+    /// 2 MHz maximum. It was 32: at that pace a four-register motion read took
+    /// ~300 us, longer than one 250 us frame at the PAW32xx's top frame rate,
+    /// so a frame boundary could fall between the low and high delta bytes.
     #[inline(always)]
     fn spi_delay() {
-        for _ in 0..32 {
+        for _ in 0..12 {
             core::hint::spin_loop();
         }
     }
@@ -86,12 +92,15 @@ where
             let _ = self.sck.set_low();
             Self::spi_delay();
 
-            let _ = self.sck.set_high();
-            Self::spi_delay();
-
+            // The sensor drives SDIO after the falling edge and guarantees it
+            // only briefly past the rising one, so sample at the end of the
+            // low phase, right before the rising edge -- not a delay after it.
             if self.sdio.is_high().unwrap_or(false) {
                 byte |= 1 << i;
             }
+
+            let _ = self.sck.set_high();
+            Self::spi_delay();
         }
 
         byte
