@@ -26,8 +26,36 @@ pub const BLE_READY: u8 = 6;
 /// The most recent phase reached; see the constants above.
 pub static BOOT_PHASE: AtomicU8 = AtomicU8::new(CHIP_INIT);
 
-pub(crate) fn stamp(phase: u8) {
+/// When each phase was reached, in milliseconds since the timer started, in
+/// the order stamped. Boot-time log lines are lost -- the USB logger only
+/// exists once the tasks run -- so the timeline is kept here and logged later
+/// by [`log_timeline`].
+const TIMELINE_LEN: usize = 16;
+static TIMELINE: embassy_sync::blocking_mutex::Mutex<
+    crate::RawMutex,
+    core::cell::RefCell<heapless::Vec<(u8, u32), TIMELINE_LEN>>,
+> = embassy_sync::blocking_mutex::Mutex::new(core::cell::RefCell::new(heapless::Vec::new()));
+
+/// Record that `phase` has been reached now. Firmware may call this for its
+/// own milestones too; values above [`BLE_READY`] are the firmware's to define.
+pub fn stamp(phase: u8) {
     BOOT_PHASE.store(phase, Ordering::Release);
+    let ms = embassy_time::Instant::now().as_millis() as u32;
+    TIMELINE.lock(|t| {
+        let _ = t.borrow_mut().push((phase, ms));
+    });
+}
+
+/// Log the recorded timeline, one line per phase with the gap from the
+/// previous one. Cheap enough to repeat, which a USB logger needs: it buffers
+/// only a little and the host may open the port at any time.
+pub fn log_timeline() {
+    let entries = TIMELINE.lock(|t| t.borrow().clone());
+    let mut prev = 0u32;
+    for (phase, ms) in entries.iter() {
+        info!("boot: phase {} at {} ms (+{} ms)", phase, ms, ms.saturating_sub(prev));
+        prev = *ms;
+    }
 }
 
 /// Reload a watchdog left running by the previous boot.
