@@ -98,6 +98,10 @@ fn generate_constants(bc: &BuildConstants, config: &KeyboardTomlConfig) -> Strin
     ));
     lines.push(format!("pub const NUM_BLE_PROFILE: usize = {};", bc.ble_profiles_num));
     lines.push(format!(
+        "pub const BLE_ADV_TX_POWER_DBM: i8 = {};",
+        bc.ble_adv_tx_power_dbm
+    ));
+    lines.push(format!(
         "pub const SPLIT_CENTRAL_SLEEP_TIMEOUT_SECONDS: u32 = {};",
         bc.split_central_sleep_timeout_seconds
     ));

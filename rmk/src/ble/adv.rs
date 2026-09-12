@@ -102,12 +102,47 @@ impl Adv<'_> {
         AdvertisementParameters {
             primary_phy: phy,
             secondary_phy: phy,
-            tx_power: TxPower::Plus8dBm,
+            tx_power: adv_tx_power(),
             interval_min: interval,
             interval_max: interval,
             ..Default::default()
         }
     }
+}
+
+/// The advertising power, as configured by `[ble] default_tx_power` (the
+/// connection power set on the controller), so a board tuned for range or
+/// for battery gets the same answer on both. Rounded down to the nearest
+/// level the HCI enum has.
+fn adv_tx_power() -> TxPower {
+    const LEVELS: [TxPower; 20] = [
+        TxPower::Minus40dBm,
+        TxPower::Minus20dBm,
+        TxPower::Minus16dBm,
+        TxPower::Minus12dBm,
+        TxPower::Minus8dBm,
+        TxPower::Minus4dBm,
+        TxPower::ZerodBm,
+        TxPower::Plus2dBm,
+        TxPower::Plus3dBm,
+        TxPower::Plus4dBm,
+        TxPower::Plus5dBm,
+        TxPower::Plus6dBm,
+        TxPower::Plus7dBm,
+        TxPower::Plus8dBm,
+        TxPower::Plus10dBm,
+        TxPower::Plus12dBm,
+        TxPower::Plus14dBm,
+        TxPower::Plus16dBm,
+        TxPower::Plus18dBm,
+        TxPower::Plus20dBm,
+    ];
+    LEVELS
+        .iter()
+        .rev()
+        .find(|level| (**level as i8) <= crate::BLE_ADV_TX_POWER_DBM)
+        .copied()
+        .unwrap_or(TxPower::Minus40dBm)
 }
 
 /// Broadcast `adv` and hand back the connection a central makes on it, or

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Advertise at `[ble] default_tx_power` instead of a fixed +8 dBm; when it is unset advertising keeps its +8 dBm
 - Keep other physically held one-shot modifiers active when one is released
 - Preserve unresolved keys from unrelated combos when another combo triggers, instead of silently discarding their press events
 - Identify the keyboard's HID report characteristics on the dongle by their Report Reference descriptor instead of `HidService`'s declaration order.

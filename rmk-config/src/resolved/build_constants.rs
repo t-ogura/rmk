@@ -50,6 +50,9 @@ pub struct BuildConstants {
     pub split_battery_peripheral_user_descriptions: Vec<String>,
     pub ble_profiles_num: usize,
     pub split_central_sleep_timeout_seconds: u32,
+    /// Advertising TX power in dBm: `[ble] default_tx_power`, or the +8 dBm
+    /// advertising has always used when it is unset.
+    pub ble_adv_tx_power_dbm: i8,
     pub protocol_macro_chunk_size: usize,
     pub auto_mouse_layer_max_num: usize,
     /// Rynk RX/TX buffer size (bytes).
@@ -250,6 +253,7 @@ impl crate::KeyboardTomlConfig {
             split_battery_peripheral_user_descriptions,
             ble_profiles_num: rmk.ble_profiles_num,
             split_central_sleep_timeout_seconds: rmk.split_central_sleep_timeout_seconds,
+            ble_adv_tx_power_dbm: self.ble.as_ref().and_then(|ble| ble.default_tx_power).unwrap_or(8),
             protocol_macro_chunk_size: rmk.protocol_macro_chunk_size,
             auto_mouse_layer_max_num,
             rynk_buffer_size: rmk.rynk_buffer_size,
