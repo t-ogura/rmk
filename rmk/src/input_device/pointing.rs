@@ -417,6 +417,18 @@ impl MotionAccumulator {
         self.reset_y();
     }
 
+    /// Return output the report could not carry, so it is sent in the next
+    /// reports instead of being lost. `unsent` is in output units; `divisor`
+    /// converts it back into the accumulator's input units.
+    pub fn carry(&mut self, unsent_x: i16, unsent_y: i16, divisor_x: u8, divisor_y: u8) {
+        self.remainder_x = self
+            .remainder_x
+            .saturating_add(unsent_x.saturating_mul(divisor_x as i16));
+        self.remainder_y = self
+            .remainder_y
+            .saturating_add(unsent_y.saturating_mul(divisor_y as i16));
+    }
+
     /// Reset x axis remainder of accumulator
     pub fn reset_x(&mut self) {
         self.remainder_x = 0;
@@ -504,6 +516,18 @@ impl Default for PointingProcessorConfig {
     }
 }
 
+/// Largest magnitude a HID relative axis carries. The descriptor's logical range
+/// is symmetric, so -128 is out of range: a host is entitled to treat it as a
+/// null value and ignore that axis for the report -- which on a fast move in
+/// the negative direction looks like the cursor freezing on that axis.
+const AXIS_MAX: i16 = i8::MAX as i16;
+
+/// Fit `value` into a HID axis: returns `(sent, unsent)`.
+fn fit_axis(value: i16) -> (i8, i16) {
+    let sent = value.clamp(-AXIS_MAX, AXIS_MAX);
+    (sent as i8, value - sent)
+}
+
 /// PointingProcessor that converts motion events to mouse reports
 #[processor(subscribe = [PointingEvent, PointingProcessorEvent])]
 pub struct PointingProcessor<'a> {
@@ -575,10 +599,14 @@ impl<'a> PointingProcessor<'a> {
                         let out_y = y.saturating_mul(cursor_config.multiplier_y as i16);
                         let out_x = if cursor_config.invert_x { -out_x } else { out_x };
                         let out_y = if cursor_config.invert_y { -out_y } else { out_y };
+                        // Cursor mode has no accumulator, so what does not fit
+                        // is lost; at 125 Hz that is anything past ~16k px/s.
+                        let (x, _) = fit_axis(out_x);
+                        let (y, _) = fit_axis(out_y);
                         MouseReport {
                             buttons,
-                            x: out_x.clamp(i8::MIN as i16, i8::MAX as i16) as i8,
-                            y: out_y.clamp(i8::MIN as i16, i8::MAX as i16) as i8,
+                            x,
+                            y,
                             wheel: 0,
                             pan: 0,
                         }
@@ -596,14 +624,20 @@ impl<'a> PointingProcessor<'a> {
                         // Sensor X → pan, sensor Y → wheel.
                         // Default: sensor +Y produces negative wheel (scroll up in HID convention).
                         // invert_y reverses wheel direction; invert_x reverses pan direction.
-                        let wheel = if scroll_config.invert_y { sy } else { -sy };
-                        let pan = if scroll_config.invert_x { -sx } else { sx };
+                        let (wheel, unsent_y) = fit_axis(if scroll_config.invert_y { sy } else { -sy });
+                        let (pan, unsent_x) = fit_axis(if scroll_config.invert_x { -sx } else { sx });
+                        // Hand the excess back in accumulator units (undoing the
+                        // inversion applied above) so it goes out next report.
+                        let back_x = if scroll_config.invert_x { -unsent_x } else { unsent_x };
+                        let back_y = if scroll_config.invert_y { unsent_y } else { -unsent_y };
+                        self.accumulator
+                            .carry(back_x, back_y, scroll_config.divisor_x, scroll_config.divisor_y);
                         MouseReport {
                             buttons,
                             x: 0,
                             y: 0,
-                            wheel: wheel.clamp(i8::MIN as i16, i8::MAX as i16) as i8,
-                            pan: pan.clamp(i8::MIN as i16, i8::MAX as i16) as i8,
+                            wheel,
+                            pan,
                         }
                     }
                     PointingMode::Sniper(sniper_config) => {
@@ -616,12 +650,18 @@ impl<'a> PointingProcessor<'a> {
                         if sx == 0 && sy == 0 {
                             return;
                         }
-                        let out_x = if sniper_config.invert_x { -sx } else { sx };
-                        let out_y = if sniper_config.invert_y { -sy } else { sy };
+                        let (x, unsent_x) = fit_axis(if sniper_config.invert_x { -sx } else { sx });
+                        let (y, unsent_y) = fit_axis(if sniper_config.invert_y { -sy } else { sy });
+                        // A flick faster than one report can carry becomes a
+                        // few reports of lag rather than lost travel.
+                        let back_x = if sniper_config.invert_x { -unsent_x } else { unsent_x };
+                        let back_y = if sniper_config.invert_y { -unsent_y } else { unsent_y };
+                        self.accumulator
+                            .carry(back_x, back_y, sniper_config.divisor, sniper_config.divisor);
                         MouseReport {
                             buttons,
-                            x: out_x.clamp(i8::MIN as i16, i8::MAX as i16) as i8,
-                            y: out_y.clamp(i8::MIN as i16, i8::MAX as i16) as i8,
+                            x,
+                            y,
                             wheel: 0,
                             pan: 0,
                         }
