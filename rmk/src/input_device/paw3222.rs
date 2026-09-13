@@ -457,20 +457,19 @@ where
         let (status, dx, dy) = self.read_motion_burst().await?;
         let took = started.elapsed();
 
-        let motion = if (status & MOTION_STATUS_MOTION) == 0 {
-            MotionData::default()
-        } else if took > BURST_MAX {
+        if took > BURST_MAX {
             // Something -- the radio, in practice -- ran in the middle of the
-            // transfer. The sensor keeps producing frames meanwhile, so the low
-            // bytes and the high nibbles can now describe different frames, and
-            // a wrong high nibble is a 256-count jump. The deltas were cleared
-            // by the read either way; losing this one frame is invisible,
-            // reporting it is not.
-            trace!(
-                "PAW3222 {}: burst took {} us, sample dropped",
-                self.id,
-                took.as_micros()
-            );
+            // transfer. This used to drop the sample, on the theory that the
+            // low bytes and the high nibbles could then describe different
+            // frames. On hardware the drops themselves were the visible
+            // fault: at speed the motion pin stays asserted, reads run every
+            // poll, and a radio interrupt lands inside one of them a couple
+            // of times a second -- each drop a lost frame's travel, felt as a
+            // ~2 Hz hiccup that slow movement never showed. Zephyr's driver
+            // never dropped and tracked cleanly, so the sample is kept.
+            trace!("PAW3222 {}: burst took {} us", self.id, took.as_micros());
+        }
+        let motion = if (status & MOTION_STATUS_MOTION) == 0 {
             MotionData::default()
         } else {
             // DXOVF/DYOVF are reported but never acted on. On hardware they

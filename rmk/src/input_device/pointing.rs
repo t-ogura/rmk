@@ -545,7 +545,14 @@ pub struct PointingProcessor<'a> {
     /// When motion last counted as activity for the idle-sleep timer.
     #[cfg(feature = "_ble")]
     last_activity_report: Option<Instant>,
+    /// When the last motion event arrived, to log stalls in the stream.
+    last_event: Option<Instant>,
 }
+
+/// A pause between motion events longer than this is logged at debug level:
+/// the device reports at a fixed rate while the sensor moves, so a longer gap
+/// is either the user pausing or the pipeline stalling.
+const EVENT_GAP_LOG: Duration = Duration::from_millis(30);
 
 /// How often pointing motion reports activity to the idle-sleep manager. A
 /// report costs a signal and a task wake-up; at the sensor's 125 Hz that is
@@ -563,6 +570,7 @@ impl<'a> PointingProcessor<'a> {
             current_mode: PointingMode::default(),
             #[cfg(feature = "_ble")]
             last_activity_report: None,
+            last_event: None,
         }
     }
 
@@ -577,6 +585,20 @@ impl<'a> PointingProcessor<'a> {
         // Filter: only process events from the configured device
         if self.config.device_id != ALL_POINTING_DEVICES && event.device_id != self.config.device_id {
             return;
+        }
+
+        {
+            let now = Instant::now();
+            if let Some(last) = self.last_event
+                && now - last > EVENT_GAP_LOG
+            {
+                debug!(
+                    "PointingProcessor {}: {} ms since the previous motion event",
+                    self.config.device_id,
+                    (now - last).as_millis()
+                );
+            }
+            self.last_event = Some(now);
         }
 
         // Motion is user activity as much as a key press is. Without this a
