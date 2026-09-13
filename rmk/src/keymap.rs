@@ -6,7 +6,7 @@ use rmk_types::fork::Fork;
 use rmk_types::morse::{Morse, MorseProfile};
 #[cfg(all(feature = "storage", feature = "host"))]
 use {
-    crate::{boot::reboot_keyboard, storage::Storage},
+    crate::{boot::reboot_keyboard_for, storage::Storage},
     embedded_storage_async::nor_flash::NorFlash,
 };
 
@@ -441,7 +441,7 @@ impl<'a> KeyMap<'a> {
         {
             error!("Failed to read from storage, clearing...");
             storage.flash.erase_all().await.ok();
-            reboot_keyboard();
+            reboot_keyboard_for(crate::boot::RebootReason::StorageUnreadable);
         }
 
         Self::build(data, behavior, positional_config)

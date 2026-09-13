@@ -1572,7 +1572,7 @@ impl<'a> Keyboard<'a> {
             KeyboardAction::Reboot => {
                 // When releasing the key, process the boot action
                 if !event.pressed {
-                    boot::reboot_keyboard();
+                    boot::reboot_keyboard_for(boot::RebootReason::Requested);
                 }
             }
             #[cfg(feature = "storage")]

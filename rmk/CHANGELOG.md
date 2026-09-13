@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- On nRF, leave the reason for a self-reset (BLE runner stopped, unreadable storage, stale split link, requested) in `POWER.GPREGRET2` as `0xA0 | code`, so the next boot can tell a firmware reboot from a power event
 - Make Trouble BLE roles explicit, document environment-variable memory tuning, update the nRF52832 examples to peripheral-only SDC, and derive split notification capacity from Trouble's configured packet-pool MTU.
 - Publish the dongle's state.
 

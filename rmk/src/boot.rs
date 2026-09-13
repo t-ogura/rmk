@@ -36,6 +36,35 @@ pub fn jump_to_bootloader() {
     reboot_keyboard();
 }
 
+/// Why the firmware is rebooting itself.
+///
+/// On nRF the code is written to `POWER.GPREGRET2` as `0xA0 | code` before the
+/// reset. The register survives a soft reset but not a power-on, brown-out, pin
+/// or watchdog reset, so the next boot can read it to tell a self-reboot apart
+/// from those.
+#[derive(Clone, Copy)]
+#[repr(u8)]
+pub enum RebootReason {
+    /// The BLE host runner returned an error.
+    BleRunnerStopped = 1,
+    /// A startup storage read failed and the storage was erased.
+    StorageUnreadable = 2,
+    /// The controller no longer knows a split link the host still holds.
+    StaleSplitLink = 3,
+    /// A host asked for a reset (Vial / Rynk storage reset).
+    Requested = 4,
+}
+
+pub(crate) fn reboot_keyboard_for(reason: RebootReason) {
+    #[cfg(feature = "_nrf_ble")]
+    embassy_nrf::pac::POWER
+        .gpregret2()
+        .write_value(embassy_nrf::pac::power::regs::Gpregret2((0xA0 | reason as u8) as u32));
+    #[cfg(not(feature = "_nrf_ble"))]
+    let _ = reason;
+    reboot_keyboard();
+}
+
 pub(crate) fn reboot_keyboard() {
     warn!("Rebooting keyboard!");
     // For cortex-m:
