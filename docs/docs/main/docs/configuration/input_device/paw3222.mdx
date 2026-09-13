@@ -42,6 +42,11 @@ invert_x = true
 # proc_swap_xy = true
 ```
 
+The sensor is read at most every 4 ms (the `poll_interval` of the generated
+`PointingDevice`); its deltas accumulate between reads. Reading on every
+frame -- which a level-triggered motion pin invites -- made the sensor stall
+for tens of milliseconds at speed on hardware.
+
 Deltas are read as 12-bit values (`DELTA_X`/`DELTA_Y` plus `DELTA_XY_HI`). The
 driver switches the sensor into 12-bit mode itself (`MOUSE_OPTION` bit 2; the
 part powers up in 8-bit mode, where deltas saturate at ±127), and a sample whose

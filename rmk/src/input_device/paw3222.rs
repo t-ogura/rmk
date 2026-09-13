@@ -525,7 +525,10 @@ where
     /// With a motion pin wired the poll never waits on this timer, but an
     /// unwired sensor still has to be looked at; the Zephyr driver re-checks
     /// every 15 ms while motion continues, and this is the same order.
-    const DEFAULT_POLL_INTERVAL_US: u64 = 1000;
+    /// 4 ms between reads: two per 125 Hz report. The sensor accumulates
+    /// deltas between reads (12-bit, so no overflow at that spacing), and
+    /// reading it on every frame instead made it drop out at speed.
+    const DEFAULT_POLL_INTERVAL_US: u64 = 4000;
     const DEFAULT_REPORT_HZ: u16 = 125;
 
     /// Create a new PAW3222 device
@@ -602,7 +605,7 @@ where
             init_state: InitState::Pending,
             poll_interval,
             report_interval,
-            last_poll: embassy_time::Instant::MIN,
+            last_poll: None,
             last_report: embassy_time::Instant::MIN,
             accumulated_x: 0,
             accumulated_y: 0,
