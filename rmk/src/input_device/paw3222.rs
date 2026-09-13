@@ -1,55 +1,28 @@
 //! PAW3222 Low-Power Optical Mouse Sensor Driver
 //!
 //! Ported from the Zephyr/ZMK driver implementation:
-//! <https://github.com/sekigon-gonnoc/zmk-driver-paw3222>, itself derived from
-//! Zephyr's `input_paw32xx.c`.
+//! <https://github.com/sekigon-gonnoc/zmk-driver-paw3222> (derived from Zephyr's
+//! `input_paw32xx.c`).
 //!
-//! The PAW3222 is the sensor used by several trackball split keyboards
-//! (Torabo-Tsuki, Cornix-TB, ...). It speaks the same single-wire (SDIO)
-//! half-duplex SPI as the PMW3610, so it uses the same [`BitBangSpiBus`], and
-//! this driver is structured to mirror [`crate::input_device::pmw3610`].
+//! The PAW3222 speaks the same single-wire (SDIO) half-duplex SPI as the
+//! PMW3610 -- mode 3, MSB first, up to 2 MHz -- so it shares [`BitBangSpiBus`]
+//! and mirrors [`crate::input_device::pmw3610`]. What differs, and shapes this
+//! driver:
 //!
-//! Differences from the PMW3610 worth knowing:
-//!
-//! - **12-bit deltas, and they have to be switched on.** `DELTA_X` / `DELTA_Y`
-//!   carry bits 7:0 and `DELTA_XY_HI` carries bits 11:8 of both (X in its upper
-//!   nibble, Y in its lower), giving +-2047 per read -- but only once
-//!   `XY12bit_Enh` (`MOUSE_OPTION` bit 2) is set. The sensor powers up in 8-bit
-//!   mode, where the low byte saturates at +-127 and the overflow flags fire on
-//!   any brisk movement. Zephyr's driver assembles 12 bits without ever setting
-//!   that bit, and the ZMK port dropped to 8-bit outright; both therefore live
-//!   with the +-127 ceiling, which overflows on the first frame after the
-//!   sensor's sleep modes stretch the sampling period to 32-128 ms.
-//! - **The overflow flags are not a drop signal.** `MOTION` bits 4/3
-//!   (`DYOVF`/`DXOVF`) follow the 8-bit report buffer: on hardware they were
-//!   set on every brisk sample with 12-bit mode confirmed, so treating them as
-//!   "garbage, discard" left the cursor nearly still at speed. They are logged
-//!   and otherwise ignored, as Zephyr's driver does.
-//! - **No burst-read register.** `MOTION`, `DELTA_X`, `DELTA_Y` and
-//!   `DELTA_XY_HI` are read back to back inside a single CS assertion, which is
-//!   what the Zephyr driver's six-byte transceive does on the wire.
-//! - **Write protection.** `CPI_X` / `CPI_Y` / `OPERATION_MODE` only accept
-//!   writes while `WRITE_PROTECT` holds `0x5a`; it must be closed again after.
-//! - **Axis inversion and swap are register bits.** `MOUSE_OPTION` bits 3/4
-//!   invert X/Y and bit 5 swaps them, all behind the same write protection as
-//!   the CPI registers.
-//! - **CPI granularity is 38.** `cpi / 38` goes in the register, so the usable
-//!   range is 608..=4826 CPI; the sensor powers up at 27 * 38 = 1026 CPI.
-//!
-//! Power: the datasheet gives ~0.25 mA average in Run, 16 uA in Sleep1 and
-//! 7 uA in Sleep2 (both enabled by default), so `force_awake` is a real cost on
-//! a battery. With 12-bit deltas it is not needed for tracking either: Sleep1
-//! samples every 32 ms, which at the default 1026 CPI and the rated 30 ips is
-//! under 1000 counts, well inside +-2047. Sleep2's 128 ms window can still
-//! overflow at the very top of that speed range, and that is what the overflow
-//! flags are for -- the sample is dropped instead of reported wrapped.
-//!
-//! SPI is mode 3 (CPOL=1, CPHA=1), MSB first, up to 2 MHz — which is what
-//! [`BitBangSpiBus`] produces: it idles SCK high, moves SDIO while SCK is high
-//! and samples on the rising edge.
+//! - Deltas are 12-bit (`DELTA_X`/`DELTA_Y` plus the nibbles in `DELTA_XY_HI`)
+//!   only once `XY12bit_Enh` in `MOUSE_OPTION` is set; the part powers up in
+//!   8-bit mode, where deltas saturate at +-127.
+//! - `CPI_X`, `CPI_Y`, `OPERATION_MODE` and `MOUSE_OPTION` ignore writes unless
+//!   `WRITE_PROTECT` holds `0x5a`.
+//! - There is no burst register: the four motion registers are read back to
+//!   back inside one chip-select assertion.
+//! - CPI is `cpi / 38` in the register, so 608..=4826 CPI in steps of 38.
+//! - Sleep1 (16 uA, sampling every 32 ms) and Sleep2 (7 uA, 128 ms) are on by
+//!   default and cost nothing in tracking with 12-bit deltas; `force_awake`
+//!   holds the part at ~0.25 mA.
 
 use embassy_futures::yield_now;
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::{Duration, Timer};
 use embedded_hal::digital::{InputPin, OutputPin};
 use embedded_hal_async::digital::Wait;
 use embedded_hal_async::spi::SpiBus;
@@ -107,25 +80,10 @@ const RESET_DELAY_MS: u64 = 2;
 const PROBE_RETRIES: u8 = 10;
 const PROBE_RETRY_DELAY_MS: u64 = 100;
 
-// There are deliberately no per-transaction delay constants here.
-//
-// The datasheet's NCS/SCLK setup and hold times are all well under a
-// microsecond, and `BitBangSpiBus` already spends roughly that long on a single
-// bit, so a bit-banged transfer meets them by construction. The Zephyr driver
-// this is ported from inserts no delays either -- it issues the whole motion
-// read as one uninterrupted SPI transfer.
-//
-// Adding them back would be actively harmful rather than merely redundant:
-// `Timer::after` is an await point, and on a 32768 Hz tick it rounds any
-// sub-tick duration up to 30-60 us. A read with delays between its bytes hands
-// the executor several such windows *while CS is still asserted*, so a BLE or
-// USB task can stretch one motion read past the sensor's next frame. The
-// deltas then saturate and the cursor moves in steps.
-
-/// A motion burst is four registers, ~100 us on the bit-banged bus. Anything
-/// well past that means the transfer was preempted mid-way (see `read_motion`).
-/// embassy-time's tick is 30 us on a 32 kHz RTC, so the bound is coarse.
-const BURST_MAX: Duration = Duration::from_micros(400);
+// No timer delays inside a transaction: the datasheet's setup and hold times
+// are under a microsecond, which a bit-banged bit already takes, and an await
+// point with CS asserted lets another task stretch the read past the sensor's
+// next frame.
 
 // Resolution constants: the register takes `cpi / RES_STEP`, valid 16..=127.
 const RES_STEP: u16 = 38;
@@ -223,13 +181,8 @@ pub struct Paw3222<SPI: SpiBus, CS: OutputPin, MOTION: InputPin + Wait> {
     cs: CS,
     motion_gpio: Option<MOTION>,
     config: Paw3222Config,
-    /// `MOUSE_OPTION` read back after init reported `XY12bit_Enh` set.
-    ///
-    /// Register writes on this bus have no other witness, so the driver does
-    /// not assume its own write landed. When it did not, the sensor is in its
-    /// power-on 8-bit mode: `DELTA_XY_HI` is meaningless and the overflow
-    /// flags fire on every brisk sample, so both are ignored rather than
-    /// letting the cursor stall at speed.
+    /// `XY12bit_Enh` was confirmed set by reading `MOUSE_OPTION` back after
+    /// init; otherwise the part is in 8-bit mode and `DELTA_XY_HI` is ignored.
     twelve_bit: bool,
 }
 
@@ -285,13 +238,8 @@ impl<SPI: SpiBus, CS: OutputPin, MOTION: InputPin + Wait> Paw3222<SPI, CS, MOTIO
     }
 
     /// Read `MOTION`, `DELTA_X`, `DELTA_Y` and `DELTA_XY_HI` inside one CS
-    /// assertion, and return `(status, dx, dy)`.
-    ///
-    /// The Zephyr driver issues this as a single transceive with NCS held low
-    /// across all four registers; on a half-duplex bus the same wire sequence is
-    /// an address write and a data read per register. The order is the
-    /// datasheet's: `MOTION` first, because reading it is what validates the
-    /// delta registers behind it.
+    /// assertion and return `(status, dx, dy)`. `MOTION` goes first: reading it
+    /// is what validates the delta registers behind it.
     async fn read_motion_burst(&mut self) -> Result<(u8, i16, i16), Paw3222Error> {
         let _ = self.cs.set_low();
         ncs_delay();
@@ -320,10 +268,8 @@ impl<SPI: SpiBus, CS: OutputPin, MOTION: InputPin + Wait> Paw3222<SPI, CS, MOTIO
         Ok((status, dx, dy))
     }
 
-    /// `CPI_X`, `CPI_Y` and `OPERATION_MODE` silently ignore writes unless
-    /// `WRITE_PROTECT` holds `0x5a`, so every write to them is bracketed by
-    /// these two. The window is closed even when the body failed, so a
-    /// transient SPI error cannot leave those registers writable.
+    /// Open the write-protect window (`WRITE_PROTECT = 0x5a`); callers close it
+    /// again with [`Self::protect`] even when the write in between failed.
     async fn unprotect(&mut self) -> Result<(), Paw3222Error> {
         self.write_reg(PAW3222_WRITE_PROTECT, WRITE_PROTECT_DISABLE).await
     }
@@ -371,11 +317,7 @@ impl<SPI: SpiBus, CS: OutputPin, MOTION: InputPin + Wait> Paw3222<SPI, CS, MOTIO
             self.set_cpi(self.config.res_cpi as u16).await?;
         }
 
-        // MOUSE_OPTION sits above WRITE_PROTECT's boundary, so the window has
-        // to be open or the write is silently ignored. The 12-bit enable is not
-        // optional: the sensor powers up in 8-bit mode, where DELTA_X/Y saturate
-        // at +-127 and raise the overflow flags on any brisk movement, and
-        // DELTA_XY_HI reads back nothing useful.
+        // 12-bit deltas plus the axis options; the part powers up in 8-bit mode.
         let mut opt = MOUSE_OPTION_XY12BIT_ENH;
         if self.config.invert_x {
             opt |= MOUSE_OPTION_INV_X;
@@ -453,44 +395,22 @@ where
     }
 
     async fn read_motion(&mut self) -> Result<MotionData, PointingDriverError> {
-        let started = Instant::now();
         let (status, dx, dy) = self.read_motion_burst().await?;
-        let took = started.elapsed();
-
-        if took > BURST_MAX {
-            // Something -- the radio, in practice -- ran in the middle of the
-            // transfer. This used to drop the sample, on the theory that the
-            // low bytes and the high nibbles could then describe different
-            // frames. On hardware the drops themselves were the visible
-            // fault: at speed the motion pin stays asserted, reads run every
-            // poll, and a radio interrupt lands inside one of them a couple
-            // of times a second -- each drop a lost frame's travel, felt as a
-            // ~2 Hz hiccup that slow movement never showed. Zephyr's driver
-            // never dropped and tracked cleanly, so the sample is kept.
-            trace!("PAW3222 {}: burst took {} us", self.id, took.as_micros());
-        }
         let motion = if (status & MOTION_STATUS_MOTION) == 0 {
             MotionData::default()
         } else {
-            // DXOVF/DYOVF are reported but never acted on. On hardware they
-            // came up on every brisk sample even with 12-bit mode confirmed --
-            // they track the 8-bit report buffer, not the 12-bit readout -- and
-            // dropping those samples left the cursor nearly still at speed.
-            // Zephyr's driver ignores the flags too. A real 12-bit wrap would
-            // need two inches of travel between two reads, which per-frame
-            // reading cannot produce.
+            // DXOVF/DYOVF track the 8-bit report buffer and are set on any
+            // brisk sample even in 12-bit mode, so they are logged, not acted
+            // on -- as in Zephyr's driver.
             if (status & MOTION_STATUS_OVF) != 0 {
                 trace!("PAW3222 {}: overflow flag set (status {:#04x})", self.id, status);
             }
             MotionData { dx, dy }
         };
 
-        // Nothing above this line ever suspends -- the bit-banged transfers are
-        // synchronous loops, and the delays that used to punctuate them are gone.
-        // The caller polls on the motion pin, which reads ready the moment the
-        // sensor has data, so without a yield here a pin stuck low would spin
-        // this task forever and starve the rest of the firmware. Yield outside
-        // the CS assertion, where handing the CPU over costs nothing.
+        // The bit-banged read never suspends, and a level-triggered motion pin
+        // reads ready again at once, so yield here or a stuck pin starves the
+        // other tasks.
         yield_now().await;
 
         Ok(motion)

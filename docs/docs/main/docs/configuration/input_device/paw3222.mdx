@@ -42,21 +42,16 @@ invert_x = true
 # proc_swap_xy = true
 ```
 
-The sensor is read at most every 4 ms (the `poll_interval` of the generated
-`PointingDevice`); its deltas accumulate between reads. Reading on every
-frame -- which a level-triggered motion pin invites -- made the sensor stall
-for tens of milliseconds at speed on hardware.
+The sensor is read every 4 ms (the generated `PointingDevice`'s poll interval)
+and accumulates its deltas in between; with the motion pin wired, the read
+also waits for the pin. Deltas are 12-bit (`DELTA_X`/`DELTA_Y` plus
+`DELTA_XY_HI`): the driver enables 12-bit mode itself, since the part powers
+up in 8-bit mode where deltas saturate at ±127.
 
-Deltas are read as 12-bit values (`DELTA_X`/`DELTA_Y` plus `DELTA_XY_HI`). The
-driver switches the sensor into 12-bit mode itself (`MOUSE_OPTION` bit 2; the
-part powers up in 8-bit mode, where deltas saturate at ±127), and a sample whose
-`MOTION` overflow flags are set is dropped rather than reported.
-
-`force_awake` keeps the sensor in Run mode (~0.25 mA on the datasheet) instead
-of letting it drop to Sleep1 (16 uA, sampling every 32 ms after 256 ms idle)
-and Sleep2 (7 uA, every 128 ms after 20 s). Leave it off on a battery: with
-12-bit deltas the Sleep1 window cannot overflow at the sensor's rated speed and
-an overflowed Sleep2 sample is flagged and dropped, so the only thing it buys
+`force_awake` holds the sensor in Run mode (~0.25 mA) instead of letting it
+drop to Sleep1 (16 uA, sampling every 32 ms after 256 ms idle) and Sleep2
+(7 uA, every 128 ms after 20 s). Leave it off on a battery: with 12-bit deltas
+the sleep windows do not overflow at the sensor's rated speed, so all it buys
 is up to one sleep sampling period of wake-up latency.
 
 CPI is written as `cpi / 38` into a register field the datasheet limits to
