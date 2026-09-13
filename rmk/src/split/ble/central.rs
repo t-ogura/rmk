@@ -590,6 +590,7 @@ async fn update_conn_params_on_sleep_change<
             };
 
             if sent {
+                info!("[split] link parameters applied, sleeping: {}", sleeping);
                 sleeping_conn_param_applied = sleeping;
             }
         }
