@@ -539,7 +539,20 @@ pub struct PointingProcessor<'a> {
     accumulator: MotionAccumulator,
     /// current active mode
     current_mode: PointingMode,
+    /// When motion last counted as activity for the idle-sleep timer.
+    #[cfg(feature = "_ble")]
+    last_activity_report: Option<Instant>,
 }
+
+/// How often pointing motion reports activity to the idle-sleep manager.
+///
+/// A report costs a signal and a task wake-up, and a sensor reporting at
+/// 125 Hz raises one per sample against a timeout counted in seconds. The
+/// interval has to stay well under the shortest timeout anyone would set, so
+/// that a hand still on the ball keeps the keyboard awake: 250 ms leaves
+/// three reports inside even a one-second timeout while dropping 97% of them.
+#[cfg(feature = "_ble")]
+const ACTIVITY_REPORT_INTERVAL: Duration = Duration::from_millis(250);
 
 impl<'a> PointingProcessor<'a> {
     /// Create a new pointing processor with default settings
@@ -549,6 +562,8 @@ impl<'a> PointingProcessor<'a> {
             config,
             accumulator: MotionAccumulator::default(),
             current_mode: PointingMode::default(),
+            #[cfg(feature = "_ble")]
+            last_activity_report: None,
         }
     }
 
@@ -565,10 +580,23 @@ impl<'a> PointingProcessor<'a> {
             return;
         }
 
-        // Report activity for sleep management, as the keyboard does for key
-        // events: on a pointing device, moving the ball is the activity.
+        // Motion is user activity as much as a key press is. Without this a
+        // central with `split_central_sleep_timeout_seconds` set would relax its
+        // split links to the sleep parameters (a multi-second effective interval)
+        // in the middle of mouse-only use, and typing would lag until a key
+        // press woke it. A few reports a second are plenty for a timeout
+        // counted in seconds; see ACTIVITY_REPORT_INTERVAL.
         #[cfg(feature = "_ble")]
-        report_activity();
+        {
+            let now = Instant::now();
+            if self
+                .last_activity_report
+                .is_none_or(|last| now - last >= ACTIVITY_REPORT_INTERVAL)
+            {
+                report_activity();
+                self.last_activity_report = Some(now);
+            }
+        }
 
         let mut x = 0i16;
         let mut y = 0i16;

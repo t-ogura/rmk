@@ -32,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Re-pairing a cleared BLE profile with the same host no longer leaves the profile marked as removed.
 - `[chip.nrf52833] dcdc_reg0_voltage` was ignored; it now sets the REG0 output voltage.
 - Never read a pointing sensor more often than its `poll_interval`, motion pin or not: a level-triggered pin re-read the sensor on every frame during fast movement, and on a PAW3222 the motion stream then stalled for 30-170 ms at a time
+- Poll the pending pointing report before the motion pin: with a level-triggered motion pin the pin is always ready during fast movement, so `select` never reached the report arm and reports starved
+- Report pointing motion as sleep activity at most every 250 ms rather than once per sample
 - Keep other physically held one-shot modifiers active when one is released
 - Preserve unresolved keys from unrelated combos when another combo triggers, instead of silently discarding their press events
 - Identify the keyboard's HID report characteristics on the dongle by their Report Reference descriptor instead of `HidService`'s declaration order.
