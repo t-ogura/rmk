@@ -80,9 +80,8 @@ impl Handle<GetCapabilities> for RynkService<'_> {
 
 impl Handle<Reboot> for RynkService<'_> {
     async fn handle(&self, _: ()) -> Result<(), RynkError> {
-        // Fire-and-forget: synchronous reset never returns on real hardware.
-        crate::boot::reboot_keyboard();
-        Ok(())
+        // Never returns on real hardware; the host-side test harness stubs it.
+        crate::boot::reboot_keyboard_for(crate::boot::RebootReason::Requested)
     }
 }
 

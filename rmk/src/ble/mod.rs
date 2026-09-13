@@ -411,7 +411,7 @@ pub(crate) async fn ble_task<C: Controller, P: PacketPool, E: EventHandler>(mut 
     if let Err(e) = runner.run_with_handler(handler).await {
         error!("[ble_task] runner stopped, rebooting: {:?}", e);
         Timer::after_millis(100).await;
-        crate::boot::reboot_keyboard();
+        crate::boot::reboot_keyboard_for(crate::boot::RebootReason::BleRunnerStopped);
     }
 }
 

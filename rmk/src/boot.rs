@@ -36,7 +36,38 @@ pub fn jump_to_bootloader() {
     reboot_keyboard();
 }
 
-pub(crate) fn reboot_keyboard() {
+/// Why the firmware is rebooting itself.
+///
+/// On nRF the code is left in `POWER.GPREGRET2` (as `0xA0 | code`) before the
+/// reset. That register survives a soft reset and is cleared by a power-on,
+/// brown-out, pin or watchdog reset, so the next boot can read it first thing
+/// and tell "we rebooted ourselves, and from where" apart from every other
+/// way a board can come up -- a soft reset otherwise looks like nothing at all
+/// from the outside: no USB, no log, and any log buffer is gone with the RAM.
+#[derive(Clone, Copy)]
+#[repr(u8)]
+pub enum RebootReason {
+    /// The BLE host runner returned an error.
+    BleRunnerStopped = 1,
+    /// A startup storage read failed and the storage was erased.
+    StorageUnreadable = 2,
+    /// The controller no longer knows a split link the host still holds.
+    StaleSplitLink = 3,
+    /// A host asked for a reset (Vial / Rynk storage reset).
+    Requested = 4,
+}
+
+pub(crate) fn reboot_keyboard_for(reason: RebootReason) -> ! {
+    #[cfg(feature = "_nrf_ble")]
+    embassy_nrf::pac::POWER
+        .gpregret2()
+        .write_value(embassy_nrf::pac::power::regs::Gpregret2((0xA0 | reason as u8) as u32));
+    #[cfg(not(feature = "_nrf_ble"))]
+    let _ = reason;
+    reboot_keyboard()
+}
+
+pub(crate) fn reboot_keyboard() -> ! {
     warn!("Rebooting keyboard!");
     // For cortex-m:
     #[cfg(all(
@@ -48,4 +79,7 @@ pub(crate) fn reboot_keyboard() {
 
     #[cfg(feature = "_esp_ble")]
     esp_hal::system::software_reset();
+
+    #[allow(unreachable_code)]
+    loop {}
 }

@@ -24,7 +24,7 @@ use {
 
 #[cfg(feature = "_ble")]
 use crate::ble::profile::ProfileInfo;
-use crate::boot::reboot_keyboard;
+use crate::boot::reboot_keyboard_for;
 use crate::channel::FLASH_CHANNEL;
 use crate::config::StorageConfig;
 #[cfg(all(feature = "_ble", feature = "split"))]
@@ -758,9 +758,8 @@ impl<F: AsyncNorFlash, const ROW: usize, const COL: usize, const NUM_LAYER: usiz
                     update_storage_field!(&mut self.flash, &mut self.buffer, LayoutConfig, layout_option)
                 }
                 FlashOperationMessage::Reset => {
-                    let result = self.flash.erase_all().await;
-                    reboot_keyboard();
-                    result
+                    let _ = self.flash.erase_all().await;
+                    reboot_keyboard_for(crate::boot::RebootReason::Requested)
                 }
                 FlashOperationMessage::ResetLayout => {
                     info!("Ignoring ResetLayout at runtime (handled at startup via clear_layout).");
