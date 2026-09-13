@@ -213,16 +213,10 @@ impl<S: PointingDriver> PointingDevice<S> {
 
         loop {
             let poll_wait = async {
-                // Never read more often than `poll_interval`, motion pin or not.
-                // A level-triggered pin is low again the moment the sensor has
-                // a new frame -- every 250 us at 4000 fps -- so waiting on the
-                // pin alone re-read the sensor on every frame during fast
-                // movement: thousands of SPI transactions a second, and on a
-                // PAW3222 the motion stream then stalled for 30-170 ms at a
-                // time (the sensor reported no motion while the ball moved).
-                // Zephyr's driver reads once per 15 ms after an interrupt and
-                // tracks cleanly; the deltas accumulate in the sensor between
-                // reads, and a 12-bit delta does not overflow in a few ms.
+                // The motion pin is level-triggered and low again as soon as the
+                // sensor has a new frame, so waiting on it alone reads the sensor
+                // on every frame at speed. `poll_interval` spaces the reads; the
+                // sensor accumulates deltas in between.
                 let spacing = async {
                     // The first read is immediate; `poll_interval` spaces the ones after.
                     if let Some(last) = self.last_poll {
@@ -250,14 +244,10 @@ impl<S: PointingDriver> PointingDevice<S> {
                 }
             };
 
-            // `select` polls its first argument first and returns without
-            // touching the second one if it is already ready, so the report has
-            // to come first. A level-triggered motion pin reads ready the
-            // instant the sensor has data, and during fast movement it is low
-            // again by the next poll -- put the poll first and the report is
-            // never even polled, so the host sees nothing at all until the user
-            // slows down. The report is `pending` unless motion is accumulated
-            // and its interval has elapsed, so this costs the poll nothing.
+            // `select` returns its first ready argument without polling the
+            // second, and during fast movement the motion pin is always ready --
+            // so the report goes first, or it is never polled at all. It is
+            // `pending` unless motion is accumulated and the interval is up.
             match select(report_wait, poll_wait).await {
                 Either::Second(_) => {
                     self.poll_once().await;
