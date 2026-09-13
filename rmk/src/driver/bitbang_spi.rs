@@ -51,12 +51,9 @@ where
         Self { sck, sdio }
     }
 
-    /// One SCK phase. 12 spins is roughly 0.5-1 us on a 64 MHz Cortex-M4 and
-    /// about a quarter of that on a 125 MHz RP2040, which keeps every phase
-    /// above the 250 ns the PixArt parts require and the clock under their
-    /// 2 MHz maximum. It was 32: at that pace a four-register motion read took
-    /// ~300 us, longer than one 250 us frame at the PAW32xx's top frame rate,
-    /// so a frame boundary could fall between the low and high delta bytes.
+    /// One SCK phase: 12 spins is 0.5-1 us on a 64 MHz Cortex-M4 (about a
+    /// quarter of that on a 125 MHz RP2040), above the PixArt parts' 250 ns
+    /// hold time and under their 2 MHz clock maximum.
     #[inline(always)]
     fn spi_delay() {
         for _ in 0..12 {
