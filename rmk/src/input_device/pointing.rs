@@ -75,7 +75,10 @@ pub struct PointingDevice<S: PointingDriver> {
     pub poll_interval: Duration,
     pub id: u8,
     pub report_interval: Duration,
-    pub last_poll: Instant,
+    /// When the sensor was last read, or `None` before the first read. Not a
+    /// sentinel value: at the start of a test `Instant::now()` is `Instant::MIN`,
+    /// so "never" has to be its own state.
+    pub last_poll: Option<Instant>,
     pub last_report: Instant,
     pub accumulated_x: i32,
     pub accumulated_y: i32,
@@ -204,24 +207,26 @@ impl<S: PointingDriver> PointingDevice<S> {
             }
         }
 
-        if self.last_poll == Instant::MIN {
-            self.last_poll = Instant::now();
-        }
         if self.last_report == Instant::MIN {
             self.last_report = Instant::now();
         }
 
         loop {
             let poll_wait = async {
+                // The motion pin is level-triggered and low again as soon as the
+                // sensor has a new frame, so waiting on it alone reads the sensor
+                // on every frame at speed. `poll_interval` spaces the reads; the
+                // sensor accumulates deltas in between.
+                let spacing = async {
+                    // The first read is immediate; `poll_interval` spaces the ones after.
+                    if let Some(last) = self.last_poll {
+                        Timer::after(self.poll_interval.checked_sub(last.elapsed()).unwrap_or(Duration::MIN)).await;
+                    }
+                };
                 if let Some(gpio) = self.sensor.motion_gpio() {
-                    let _ = gpio.wait_for_low().await;
+                    let _ = embassy_futures::join::join(gpio.wait_for_low(), spacing).await;
                 } else {
-                    Timer::after(
-                        self.poll_interval
-                            .checked_sub(self.last_poll.elapsed())
-                            .unwrap_or(Duration::MIN),
-                    )
-                    .await;
+                    spacing.await;
                 }
             };
 
@@ -246,7 +251,7 @@ impl<S: PointingDriver> PointingDevice<S> {
             match select(report_wait, poll_wait).await {
                 Either::Second(_) => {
                     self.poll_once().await;
-                    self.last_poll = Instant::now();
+                    self.last_poll = Some(Instant::now());
                 }
                 Either::First(_) => {
                     if let Some(event) = self.take_report_event() {
@@ -969,7 +974,7 @@ mod tests {
             id: 1,
 
             report_interval: Duration::from_millis(1),
-            last_poll: Instant::MIN,
+            last_poll: None,
             last_report: Instant::MIN,
             accumulated_x: 0,
             accumulated_y: 0,
@@ -1011,7 +1016,7 @@ mod tests {
             id: 1,
 
             report_interval: Duration::from_millis(1),
-            last_poll: Instant::MIN,
+            last_poll: None,
             last_report: Instant::MIN,
             accumulated_x: 0,
             accumulated_y: 0,
@@ -1044,7 +1049,7 @@ mod tests {
             id: 1,
 
             report_interval: Duration::from_millis(1),
-            last_poll: Instant::MIN,
+            last_poll: None,
             last_report: Instant::MIN,
             accumulated_x: 0,
             accumulated_y: 0,
@@ -1077,7 +1082,7 @@ mod tests {
             init_state: InitState::Ready,
             poll_interval: Duration::from_millis(1),
             report_interval: Duration::from_millis(1),
-            last_poll: Instant::MIN,
+            last_poll: None,
             last_report: Instant::MIN,
             accumulated_x: 0,
             accumulated_y: 0,
@@ -1113,7 +1118,7 @@ mod tests {
             id: 1,
 
             report_interval: Duration::from_millis(1),
-            last_poll: Instant::MIN,
+            last_poll: None,
             last_report: Instant::MIN,
             accumulated_x: 0,
             accumulated_y: 0,

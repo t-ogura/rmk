@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Never read a pointing sensor more often than its `poll_interval`, motion pin or not: a level-triggered pin re-read the sensor on every frame during fast movement, and on a PAW3222 the motion stream then stalled for 30-170 ms at a time
 - Poll the pending report before the motion pin in `PointingDevice`: with a level-triggered motion pin, fast movement kept the pin ready at every poll and the report was never polled, so the host saw nothing until the user slowed down
 - Keep mouse report axes within the HID descriptor's -127..127 (a -128 is out of the declared range and a host may drop that axis, which on a fast move looked like the cursor freezing), and carry motion a report could not fit into the following reports in Scroll and Sniper modes instead of dropping it
 - Count pointing motion as activity for the split central's idle sleep, so mouse-only use no longer relaxes the split links to their sleep parameters mid-session
