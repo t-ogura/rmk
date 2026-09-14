@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Storage: BLE bonds, the active profile and the split peer survive the re-initialisation a new firmware build triggers, so an update no longer needs every host paired again. `[storage] keep_bonds` (default true) turns it off; `clear_storage` still wipes everything.
 - `rmk::ble::is_profile_bonded(profile)`: whether a BLE profile holds a bond, for user code such as a status LED.
 - BLE: advertise to the host at a fast interval (30 ms) for the first seconds of every attempt before dropping to the slow one (200 ms), so a bonded host reconnects in seconds rather than tens of seconds after a profile switch or disconnect. `[ble] advertising_fast_interval_ms` / `advertising_slow_interval_ms` / `advertising_fast_timeout_secs`.
 - Pointing devices: an optional deadzone (`deadzone_threshold` / `deadzone_timeout_ms`) that holds back a burst of motion until it has reached a count, so a resting sensor's stray counts do not raise the auto mouse layer.

@@ -338,6 +338,10 @@ num_sectors = 16
 clear_storage = false
 # Clear the saved layout at keyboard boot, set this to true if you want to reset the layout
 clear_layout = false
+# Keep BLE bonds, the split peer and the active profile when a new firmware build
+# re-initialises the storage, so hosts stay paired across updates. Default true;
+# clear_storage = true still wipes them.
+keep_bonds = true
 
 # DFU configuration (embassy-boot, experimental), see the Bootloader documentation page.
 # All fields are optional. Partition offsets are NOT set here — they come from the

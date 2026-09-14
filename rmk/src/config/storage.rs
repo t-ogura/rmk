@@ -8,6 +8,10 @@ pub struct StorageConfig {
     pub num_sectors: u8,
     pub clear_storage: bool,
     pub clear_layout: bool,
+    /// Carry BLE bonds, the split peer and the active profile over a
+    /// storage re-initialisation (a firmware update), so hosts do not have
+    /// to be paired again. `clear_storage` still wipes everything.
+    pub keep_bonds: bool,
 }
 
 impl Default for StorageConfig {
@@ -17,6 +21,7 @@ impl Default for StorageConfig {
             num_sectors: 2,
             clear_storage: false,
             clear_layout: false,
+            keep_bonds: true,
         }
     }
 }

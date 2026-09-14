@@ -668,6 +668,10 @@ pub(crate) struct StorageConfig {
     pub clear_storage: Option<bool>,
     // Clear on the layout at reboot, set this to true if you want to reset the layout
     pub clear_layout: Option<bool>,
+    /// Keep BLE bonds, the split peer and the active profile when the storage is
+    /// re-initialised for a new firmware build, so hosts stay paired across
+    /// updates. Defaults to true; `clear_storage = true` still wipes everything.
+    pub keep_bonds: Option<bool>,
 }
 
 /// Config for DFU (embassy-boot).

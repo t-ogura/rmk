@@ -425,6 +425,25 @@ macro_rules! update_storage_field {
     }};
 }
 
+/// Split peer slots to carry over: the central keeps one per peripheral, a
+/// peripheral keeps its central under id 0.
+#[cfg(all(feature = "_ble", feature = "split"))]
+const PEER_SLOTS: usize = if crate::SPLIT_PERIPHERALS_NUM > 1 {
+    crate::SPLIT_PERIPHERALS_NUM
+} else {
+    1
+};
+
+/// Pairing lifted out of the storage while it is re-initialised.
+#[cfg(feature = "_ble")]
+#[derive(Default)]
+struct Pairing {
+    bonds: heapless::Vec<ProfileInfo, { crate::ble::profile::BOND_SLOTS }>,
+    active_profile: Option<u8>,
+    #[cfg(feature = "split")]
+    peers: heapless::Vec<PeerAddress, PEER_SLOTS>,
+}
+
 impl<F: AsyncNorFlash, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_ENCODER: usize>
     Storage<F, ROW, COL, NUM_LAYER, NUM_ENCODER>
 {
@@ -511,6 +530,19 @@ impl<F: AsyncNorFlash, const ROW: usize, const COL: usize, const NUM_LAYER: usiz
         let enabled = storage.check_enable().await;
         crate::boot_phase::stamp(crate::boot_phase::STORAGE_CHECKED);
         if !enabled || storage_config.clear_storage {
+            // A new build re-initialises the storage, but the pairing in it is
+            // still good: bonds, the split peer and the active profile do not
+            // depend on the layout the build hash guards. Lift them out before
+            // the erase and put them back after, so a firmware update does not
+            // cost the user every host pairing. `clear_storage` is the explicit
+            // request to lose them too.
+            #[cfg(feature = "_ble")]
+            let pairing = if storage_config.keep_bonds && !storage_config.clear_storage {
+                Some(storage.take_pairing().await)
+            } else {
+                None
+            };
+
             // Clear storage first
             debug!("Clearing storage!");
             let _ = storage.flash.erase_all().await;
@@ -539,6 +571,10 @@ impl<F: AsyncNorFlash, const ROW: usize, const COL: usize, const NUM_LAYER: usiz
                     .await
                     .ok();
             }
+            #[cfg(feature = "_ble")]
+            if let Some(pairing) = pairing {
+                storage.restore_pairing(pairing).await;
+            }
         } else if storage_config.clear_layout {
             #[cfg(feature = "host")]
             {
@@ -549,6 +585,70 @@ impl<F: AsyncNorFlash, const ROW: usize, const COL: usize, const NUM_LAYER: usiz
         }
 
         storage
+    }
+
+    /// The pairing state a re-initialisation would otherwise erase: every
+    /// bond slot, the active profile, and the split peer addresses (each
+    /// half stores its partner under its own id; a peripheral uses 0).
+    #[cfg(feature = "_ble")]
+    async fn take_pairing(&mut self) -> Pairing {
+        let mut pairing = Pairing::default();
+        for slot in 0..crate::ble::profile::BOND_SLOTS as u8 {
+            if let Some(StorageData::BondInfo(info)) = self.fetch_data(StorageKey::bond_info(slot)).await {
+                let _ = pairing.bonds.push(info);
+            }
+        }
+        if let Some(StorageData::ActiveBleProfile(profile)) = self.fetch_data(StorageKey::ActiveBleProfile).await {
+            pairing.active_profile = Some(profile);
+        }
+        #[cfg(feature = "split")]
+        for id in 0..PEER_SLOTS as u8 {
+            if let Some(StorageData::PeerAddress(peer)) = self.fetch_data(StorageKey::peer_address(id)).await {
+                let _ = pairing.peers.push(peer);
+            }
+        }
+        #[cfg(feature = "split")]
+        debug!(
+            "Keeping {} bond(s) and {} split peer(s) across the storage re-initialisation",
+            pairing.bonds.len(),
+            pairing.peers.len()
+        );
+        #[cfg(not(feature = "split"))]
+        debug!(
+            "Keeping {} bond(s) across the storage re-initialisation",
+            pairing.bonds.len()
+        );
+        pairing
+    }
+
+    #[cfg(feature = "_ble")]
+    async fn restore_pairing(&mut self, pairing: Pairing) {
+        for info in pairing.bonds {
+            let slot = info.slot_num;
+            if let Err(e) = self
+                .store_data(StorageKey::bond_info(slot), &StorageData::BondInfo(info))
+                .await
+            {
+                print_storage_error::<F>(e);
+            }
+        }
+        if let Some(profile) = pairing.active_profile
+            && let Err(e) = self
+                .store_data(StorageKey::ActiveBleProfile, &StorageData::ActiveBleProfile(profile))
+                .await
+        {
+            print_storage_error::<F>(e);
+        }
+        #[cfg(feature = "split")]
+        for peer in pairing.peers {
+            let id = peer.peer_id;
+            if let Err(e) = self
+                .store_data(StorageKey::peer_address(id), &StorageData::PeerAddress(peer))
+                .await
+            {
+                print_storage_error::<F>(e);
+            }
+        }
     }
 
     pub(crate) async fn read_behavior_config(
@@ -1309,6 +1409,125 @@ mod tests {
             // The freshly built keymap exposes the stored value to the via
             // GET handler.
             assert_eq!(keymap.layout_option(), 42);
+        });
+    }
+
+    #[cfg(all(feature = "_ble", feature = "split"))]
+    #[test]
+    fn build_hash_mismatch_keeps_pairing_unless_clear_storage() {
+        use crate::split::ble::PeerAddress;
+
+        async fn flash_with_pairing<const N: usize>(build_hash: u32) -> TestFlash<N, 4_096, 1> {
+            let storage_range = (N - 2 * 4_096) as u32..N as u32;
+            let mut map = MapStorage::<StorageKey, _, _>::new(
+                TestFlash::<N, 4_096, 1>::new(),
+                MapConfig::new(storage_range),
+                Cache::new_uncached(),
+            );
+            let mut buffer = [0u8; 512];
+            map.store_item(
+                &mut buffer,
+                &StorageKey::StorageConfig,
+                &StorageData::StorageConfig(LocalStorageConfig {
+                    enable: true,
+                    build_hash,
+                }),
+            )
+            .await
+            .unwrap();
+            map.store_item(
+                &mut buffer,
+                &StorageKey::bond_info(2),
+                &StorageData::BondInfo(ProfileInfo {
+                    slot_num: 2,
+                    removed: false,
+                    ..Default::default()
+                }),
+            )
+            .await
+            .unwrap();
+            map.store_item(
+                &mut buffer,
+                &StorageKey::ActiveBleProfile,
+                &StorageData::ActiveBleProfile(2),
+            )
+            .await
+            .unwrap();
+            map.store_item(
+                &mut buffer,
+                &StorageKey::peer_address(0),
+                &StorageData::PeerAddress(PeerAddress::new(0, true, [1, 2, 3, 4, 5, 6])),
+            )
+            .await
+            .unwrap();
+            map.destroy().0
+        }
+
+        block_on(async {
+            type Flash = TestFlash<16_384, 4_096, 1>;
+            #[cfg(feature = "host")]
+            let keymap = [[[KeyAction::No; 1]; 1]; 1];
+            #[cfg(feature = "host")]
+            let encoder_map: Option<&mut [[EncoderAction; 0]; 1]> = None;
+
+            // A new build (different hash) re-initialises the layout but the
+            // pairing comes through.
+            let flash = flash_with_pairing::<16_384>(BUILD_HASH.wrapping_sub(1)).await;
+            let mut storage = Storage::<Flash, 1, 1, 1, 0>::new(
+                flash,
+                #[cfg(feature = "host")]
+                &keymap,
+                #[cfg(feature = "host")]
+                &encoder_map,
+                &RuntimeStorageConfig::default(),
+                &RuntimeBehaviorConfig::default(),
+            )
+            .await;
+            assert!(matches!(
+                storage.fetch_data(StorageKey::StorageConfig).await,
+                Some(StorageData::StorageConfig(LocalStorageConfig {
+                    enable: true,
+                    build_hash: BUILD_HASH
+                }))
+            ));
+            assert!(matches!(
+                storage.fetch_data(StorageKey::bond_info(2)).await,
+                Some(StorageData::BondInfo(ProfileInfo {
+                    slot_num: 2,
+                    removed: false,
+                    ..
+                }))
+            ));
+            assert!(matches!(
+                storage.fetch_data(StorageKey::ActiveBleProfile).await,
+                Some(StorageData::ActiveBleProfile(2))
+            ));
+            assert!(matches!(
+                storage.fetch_data(StorageKey::peer_address(0)).await,
+                Some(StorageData::PeerAddress(PeerAddress {
+                    peer_id: 0,
+                    is_valid: true,
+                    address: [1, 2, 3, 4, 5, 6]
+                }))
+            ));
+
+            // `clear_storage` is the explicit request to forget everything.
+            let flash = flash_with_pairing::<16_384>(BUILD_HASH.wrapping_sub(1)).await;
+            let mut storage = Storage::<Flash, 1, 1, 1, 0>::new(
+                flash,
+                #[cfg(feature = "host")]
+                &keymap,
+                #[cfg(feature = "host")]
+                &encoder_map,
+                &RuntimeStorageConfig {
+                    clear_storage: true,
+                    ..RuntimeStorageConfig::default()
+                },
+                &RuntimeBehaviorConfig::default(),
+            )
+            .await;
+            assert!(storage.fetch_data(StorageKey::bond_info(2)).await.is_none());
+            assert!(storage.fetch_data(StorageKey::peer_address(0)).await.is_none());
         });
     }
 }

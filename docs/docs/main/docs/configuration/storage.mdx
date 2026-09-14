@@ -28,6 +28,9 @@ start_addr = 0x00000000
 clear_storage = false
 # Clear only layout/keymap data, preserve BLE bonds
 clear_layout = false
+# Keep BLE bonds, the split peer and the active profile when a new firmware build
+# re-initialises the storage (default true). clear_storage = true still wipes them.
+keep_bonds = true
 ```
 
 </Tab>
