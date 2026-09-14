@@ -1,5 +1,7 @@
 //! Manage BLE profiles and bonding information
 
+use core::sync::atomic::{AtomicU32, Ordering};
+
 #[cfg(feature = "_ble")]
 use bt_hci::{cmd::le::LeSetPhy, controller::ControllerCmdAsync};
 use embassy_futures::select::{Either3, select3};
@@ -15,6 +17,18 @@ use crate::channel::FLASH_CHANNEL;
 use crate::state::{current_profile, set_ble_profile};
 
 pub(crate) static UPDATED_PROFILE: Signal<crate::RawMutex, ProfileInfo> = Signal::new();
+
+/// Bit `n` set while profile `n` holds a bond. Kept in step with the profile
+/// manager's list so that code outside the BLE task -- a status LED deciding
+/// whether "advertising" means "waiting for a known host" or "open for
+/// pairing" -- can ask without reaching into the stack.
+static BONDED_PROFILES: AtomicU32 = AtomicU32::new(0);
+
+/// Whether `profile` holds a bond, i.e. a host has paired on it and the bond
+/// has not been cleared.
+pub fn is_profile_bonded(profile: u8) -> bool {
+    profile < 32 && BONDED_PROFILES.load(Ordering::Relaxed) & (1 << profile) != 0
+}
 pub(crate) static UPDATED_CCCD_TABLE: Signal<crate::RawMutex, heapless::Vec<u8, CCCD_TABLE_SIZE>> = Signal::new();
 
 /// The dedicated dongle bond slot: the slot number after the normal profiles,
@@ -184,6 +198,13 @@ where
 
     /// Update bonding information in the stack according to the current active profile
     pub(crate) fn update_stack_bonds(&self) {
+        let mask = self
+            .bonded_devices
+            .iter()
+            .filter(|b| !b.removed && b.slot_num < 32)
+            .fold(0u32, |m, b| m | (1 << b.slot_num));
+        BONDED_PROFILES.store(mask, Ordering::Relaxed);
+
         // Drain one at a time rather than collecting: the stack holds bonds this
         // manager has no slot for — a fresh pairing lands there before we prune —
         // and a `heapless::Vec` collect panics on the overflow.
