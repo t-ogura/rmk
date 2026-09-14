@@ -10,7 +10,9 @@ use embedded_hal::digital::{InputPin, OutputPin};
 use embedded_hal_async::digital::Wait;
 use embedded_hal_async::spi::SpiBus;
 
-use crate::input_device::pointing::{InitState, MotionData, PointingDevice, PointingDriver, PointingDriverError};
+use crate::input_device::pointing::{
+    Deadzone, InitState, MotionData, PointingDevice, PointingDriver, PointingDriverError,
+};
 
 // Burst report offsets
 const BURST_MOTION_FLAGS: usize = 0;
@@ -751,6 +753,7 @@ where
             last_report: Instant::MIN,
             accumulated_x: 0,
             accumulated_y: 0,
+            deadzone: Deadzone::default(),
         }
     }
 
@@ -783,6 +786,7 @@ where
             last_report: Instant::MIN,
             accumulated_x: 0,
             accumulated_y: 0,
+            deadzone: Deadzone::default(),
         }
     }
 }

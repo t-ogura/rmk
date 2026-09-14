@@ -1084,6 +1084,10 @@ const fn default_false() -> bool {
     false
 }
 
+const fn default_deadzone_timeout_ms() -> u32 {
+    300
+}
+
 const fn default_pointing_report_hz() -> u16 {
     125
 }
@@ -1210,6 +1214,15 @@ pub struct Paw3222Config {
     /// Report rate (Hz). Motion will be accumulated and emitted at this rate.
     #[serde(default = "default_pointing_report_hz")]
     pub report_hz: u16,
+    /// Counts of motion (|dx| + |dy|, summed over a burst) a burst must reach
+    /// before it is reported. Filters the odd count a resting sensor emits,
+    /// which would otherwise raise the auto mouse layer. 0 (default) disables.
+    #[serde(default)]
+    pub deadzone_threshold: u16,
+    /// Idle time in milliseconds that ends a burst, so the next one is gated
+    /// again. Default 300.
+    #[serde(default = "default_deadzone_timeout_ms")]
+    pub deadzone_timeout_ms: u32,
     /// Invert X axis in the PointingProcessor
     #[serde(default)]
     pub proc_invert_x: bool,
@@ -1253,6 +1266,15 @@ pub struct Pmw3610Config {
     /// Report rate (Hz). Motion will be accumulated and emitted at this rate.
     #[serde(default = "default_pointing_report_hz")]
     pub report_hz: u16,
+    /// Counts of motion (|dx| + |dy|, summed over a burst) a burst must reach
+    /// before it is reported. Filters the odd count a resting sensor emits,
+    /// which would otherwise raise the auto mouse layer. 0 (default) disables.
+    #[serde(default)]
+    pub deadzone_threshold: u16,
+    /// Idle time in milliseconds that ends a burst, so the next one is gated
+    /// again. Default 300.
+    #[serde(default = "default_deadzone_timeout_ms")]
+    pub deadzone_timeout_ms: u32,
     #[serde(default)]
     pub proc_invert_x: bool,
     /// Invert Y axis
@@ -1302,6 +1324,15 @@ pub struct Pmw33xxConfig {
     /// Report rate (Hz). Motion will be accumulated and emitted at this rate.
     #[serde(default = "default_pointing_report_hz")]
     pub report_hz: u16,
+    /// Counts of motion (|dx| + |dy|, summed over a burst) a burst must reach
+    /// before it is reported. Filters the odd count a resting sensor emits,
+    /// which would otherwise raise the auto mouse layer. 0 (default) disables.
+    #[serde(default)]
+    pub deadzone_threshold: u16,
+    /// Idle time in milliseconds that ends a burst, so the next one is gated
+    /// again. Default 300.
+    #[serde(default = "default_deadzone_timeout_ms")]
+    pub deadzone_timeout_ms: u32,
 }
 
 /// Azoteq IQS5xx trackpad configuration.

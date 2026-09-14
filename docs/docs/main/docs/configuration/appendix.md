@@ -275,6 +275,10 @@ spi = { instance = "bitbang0", sck = "P0_05", mosi = "P0_04", miso = "P0_04", cs
 # Motion interrupt pin; omit to poll the sensor
 motion = "P0_02"
 cpi = 800
+# Optional deadzone: report a burst of motion only once it reaches this many counts
+# (|dx| + |dy|); a burst ends after deadzone_timeout_ms idle. 0 (default) = off
+# deadzone_threshold = 10
+# deadzone_timeout_ms = 300
 
 # Lighting configuration, if you don't have any light, just ignore this section.
 [light]

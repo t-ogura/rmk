@@ -28,7 +28,9 @@ use embedded_hal_async::digital::Wait;
 use embedded_hal_async::spi::SpiBus;
 
 pub use crate::driver::bitbang_spi::{BitBangError, BitBangSpiBus};
-use crate::input_device::pointing::{InitState, MotionData, PointingDevice, PointingDriver, PointingDriverError};
+use crate::input_device::pointing::{
+    Deadzone, InitState, MotionData, PointingDevice, PointingDriver, PointingDriverError,
+};
 
 // ============================================================================
 // Registers
@@ -529,6 +531,7 @@ where
             last_report: embassy_time::Instant::MIN,
             accumulated_x: 0,
             accumulated_y: 0,
+            deadzone: Deadzone::default(),
         }
     }
 }

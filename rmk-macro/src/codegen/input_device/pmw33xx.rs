@@ -126,6 +126,14 @@ pub(crate) fn expand_pmw33xx_device(
         let proc_invert_y = sensor.proc_invert_y;
         let proc_swap_xy = sensor.proc_swap_xy;
         let report_hz: u16 = sensor.report_hz;
+        // The gate is a no-op at threshold 0, so it is only spelled out when set.
+        let deadzone = if sensor.deadzone_threshold > 0 {
+            let threshold: u16 = sensor.deadzone_threshold;
+            let timeout_ms: u64 = sensor.deadzone_timeout_ms as u64;
+            quote! { .with_deadzone(#threshold, ::embassy_time::Duration::from_millis(#timeout_ms)) }
+        } else {
+            quote! {}
+        };
 
         // Generate motion pin initialization (optional)
         let motion_pin_init = if let Some(motion_pin) = &sensor.motion {
@@ -187,6 +195,7 @@ pub(crate) fn expand_pmw33xx_device(
                     };
 
                     PointingDevice::<Pmw33xx<_, _, _, #sensor_spec_ident>>::with_report_hz(#sensor_id, spi_bus, cs, motion, config, #report_hz)
+                        #deadzone
                 };
             },
             ChipSeries::Rp2040 => quote! {
@@ -218,6 +227,7 @@ pub(crate) fn expand_pmw33xx_device(
                     };
 
                     PointingDevice::<Pmw33xx<_, _, _, #sensor_spec_ident>>::with_report_hz(#sensor_id, spi_bus, cs, motion, config, #report_hz)
+                        #deadzone
                 };
             },
             ChipSeries::Stm32 => quote! {
@@ -250,6 +260,7 @@ pub(crate) fn expand_pmw33xx_device(
                     };
 
                     PointingDevice::<Pmw33xx<_, _, _, #sensor_spec_ident>>::with_report_hz(#sensor_id, spi_bus, cs, motion, config, #report_hz)
+                        #deadzone
 
                 };
             },

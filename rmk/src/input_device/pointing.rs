@@ -64,6 +64,64 @@ pub enum InitState {
     Failed,
 }
 
+/// Gate on the first reports of a burst of motion.
+///
+/// A resting trackball still reports the odd count -- a nudge of the desk, a
+/// temperature drift -- and one count is enough to raise an auto mouse layer.
+/// Reports are held back until the counts of one burst (`|dx| + |dy|`,
+/// summed across reports) reach `threshold`; from then on the burst passes
+/// untouched. A burst ends after `timeout` without motion. Deliberate motion
+/// crosses the threshold within a report or two and loses only those counts.
+#[derive(Clone, Copy, Debug)]
+pub struct Deadzone {
+    /// Counts a burst must reach before it is reported. 0 disables the gate.
+    pub threshold: u16,
+    /// Idle time after which the next report starts a new burst.
+    pub timeout: Duration,
+    sum: u32,
+    passed: bool,
+    last_motion: Option<Instant>,
+}
+
+impl Default for Deadzone {
+    fn default() -> Self {
+        Self::new(0, Duration::from_millis(300))
+    }
+}
+
+impl Deadzone {
+    pub const fn new(threshold: u16, timeout: Duration) -> Self {
+        Self {
+            threshold,
+            timeout,
+            sum: 0,
+            passed: false,
+            last_motion: None,
+        }
+    }
+
+    /// Whether the report `(dx, dy)` at `now` is let through.
+    fn admit(&mut self, dx: i16, dy: i16, now: Instant) -> bool {
+        if self.threshold == 0 {
+            return true;
+        }
+        if let Some(last) = self.last_motion
+            && now.duration_since(last) >= self.timeout
+        {
+            self.sum = 0;
+            self.passed = false;
+        }
+        self.last_motion = Some(now);
+        if !self.passed {
+            self.sum = self
+                .sum
+                .saturating_add(dx.unsigned_abs() as u32 + dy.unsigned_abs() as u32);
+            self.passed = self.sum >= self.threshold as u32;
+        }
+        self.passed
+    }
+}
+
 /// PointingDevice an InputDevice for RMK
 ///
 /// This device publishes `PointingEvent` events with relative X/Y movement.
@@ -82,10 +140,17 @@ pub struct PointingDevice<S: PointingDriver> {
     pub last_report: Instant,
     pub accumulated_x: i32,
     pub accumulated_y: i32,
+    pub deadzone: Deadzone,
 }
 
 impl<S: PointingDriver> PointingDevice<S> {
     const MAX_INIT_RETRIES: u8 = 3;
+
+    /// Hold back the first `threshold` counts of every burst of motion; see [`Deadzone`].
+    pub fn with_deadzone(mut self, threshold: u16, timeout: Duration) -> Self {
+        self.deadzone = Deadzone::new(threshold, timeout);
+        self
+    }
 
     async fn try_init(&mut self) -> bool {
         match self.init_state {
@@ -153,6 +218,10 @@ impl<S: PointingDriver> PointingDevice<S> {
 
         self.accumulated_x = 0;
         self.accumulated_y = 0;
+
+        if !self.deadzone.admit(dx, dy, Instant::now()) {
+            return None;
+        }
 
         Some(PointingEvent {
             device_id: self.id,
@@ -978,6 +1047,7 @@ mod tests {
             last_report: Instant::MIN,
             accumulated_x: 0,
             accumulated_y: 0,
+            deadzone: Deadzone::default(),
         };
 
         let mut result = false;
@@ -1020,6 +1090,7 @@ mod tests {
             last_report: Instant::MIN,
             accumulated_x: 0,
             accumulated_y: 0,
+            deadzone: Deadzone::default(),
         };
 
         // Run the async try_init
@@ -1053,6 +1124,7 @@ mod tests {
             last_report: Instant::MIN,
             accumulated_x: 0,
             accumulated_y: 0,
+            deadzone: Deadzone::default(),
         };
 
         let inited = block_on(device.try_init());
@@ -1087,6 +1159,7 @@ mod tests {
             accumulated_x: 0,
             accumulated_y: 0,
             id: 1,
+            deadzone: Deadzone::default(),
         };
 
         let event = block_on(device.read_event());
@@ -1122,6 +1195,7 @@ mod tests {
             last_report: Instant::MIN,
             accumulated_x: 0,
             accumulated_y: 0,
+            deadzone: Deadzone::default(),
         };
 
         let start = Instant::now();
@@ -1912,5 +1986,28 @@ mod tests {
         let (ox, oy) = acc.accumulate(i16::MIN, i16::MIN, (1, 1), (1, 1));
         assert_eq!(ox, i16::MIN);
         assert_eq!(oy, i16::MIN);
+    }
+
+    #[test]
+    fn deadzone_holds_a_burst_until_the_threshold_and_resets_after_the_timeout() {
+        let mut dz = Deadzone::new(10, Duration::from_millis(300));
+        let t0 = Instant::from_millis(1000);
+        // Noise: three counts, then nothing -- never reported.
+        assert!(!dz.admit(1, 0, t0));
+        assert!(!dz.admit(0, -2, t0 + Duration::from_millis(8)));
+        // A new burst after the timeout starts from zero again.
+        assert!(!dz.admit(3, 3, t0 + Duration::from_millis(400)));
+        // Deliberate motion within the same burst crosses the threshold and
+        // that report passes, as does everything after it.
+        assert!(dz.admit(4, 0, t0 + Duration::from_millis(408)));
+        assert!(dz.admit(1, 0, t0 + Duration::from_millis(416)));
+        // Idle again: the gate closes.
+        assert!(!dz.admit(1, 0, t0 + Duration::from_millis(1000)));
+    }
+
+    #[test]
+    fn deadzone_zero_threshold_passes_everything() {
+        let mut dz = Deadzone::default();
+        assert!(dz.admit(1, 0, Instant::from_millis(0)));
     }
 }

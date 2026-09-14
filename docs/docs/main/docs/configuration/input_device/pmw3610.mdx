@@ -29,6 +29,11 @@ spi.cs = "P0_09"
 motion = "P0_02" # Optional. If omitted, the sensor is polled.
 
 report_hz = 125 # Optional: Report rate in Hz
+# Optional: hold back a burst of motion until it has reached this many counts
+# (|dx| + |dy|), so a resting sensor's stray counts do not reach the auto mouse
+# layer. 0 (default) disables. A burst ends after deadzone_timeout_ms idle.
+# deadzone_threshold = 10
+# deadzone_timeout_ms = 300
 
 force_awake = false
 smart_mode = true
