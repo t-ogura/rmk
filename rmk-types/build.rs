@@ -102,6 +102,18 @@ fn generate_constants(bc: &BuildConstants, config: &KeyboardTomlConfig) -> Strin
         bc.ble_adv_tx_power_dbm
     ));
     lines.push(format!(
+        "pub const BLE_ADV_FAST_INTERVAL_MS: u16 = {};",
+        bc.ble_adv_fast_interval_ms
+    ));
+    lines.push(format!(
+        "pub const BLE_ADV_SLOW_INTERVAL_MS: u16 = {};",
+        bc.ble_adv_slow_interval_ms
+    ));
+    lines.push(format!(
+        "pub const BLE_ADV_FAST_TIMEOUT_SECS: u32 = {};",
+        bc.ble_adv_fast_timeout_secs
+    ));
+    lines.push(format!(
         "pub const SPLIT_CENTRAL_SLEEP_TIMEOUT_SECONDS: u32 = {};",
         bc.split_central_sleep_timeout_seconds
     ));

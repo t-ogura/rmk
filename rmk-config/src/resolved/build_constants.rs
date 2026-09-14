@@ -1,6 +1,10 @@
 use serde::Deserialize;
 
-use crate::{DEFAULT_PASSKEY_ENTRY_TIMEOUT_SECS, MIN_PASSKEY_ENTRY_TIMEOUT_SECS};
+use crate::{
+    DEFAULT_ADVERTISING_FAST_INTERVAL_MS, DEFAULT_ADVERTISING_FAST_TIMEOUT_SECS, DEFAULT_ADVERTISING_SLOW_INTERVAL_MS,
+    DEFAULT_PASSKEY_ENTRY_TIMEOUT_SECS, MAX_ADVERTISING_INTERVAL_MS, MIN_ADVERTISING_INTERVAL_MS,
+    MIN_PASSKEY_ENTRY_TIMEOUT_SECS,
+};
 
 const SUBSCRIBER_DEFAULT_CONFIG: &str = include_str!("../default_config/subscriber_default.toml");
 
@@ -53,6 +57,11 @@ pub struct BuildConstants {
     /// Advertising TX power in dBm: `[ble] default_tx_power`, or the +8 dBm
     /// advertising has always used when it is unset.
     pub ble_adv_tx_power_dbm: i8,
+    /// Host advertising schedule: `[ble] advertising_fast_interval_ms`,
+    /// `advertising_slow_interval_ms`, `advertising_fast_timeout_secs`.
+    pub ble_adv_fast_interval_ms: u16,
+    pub ble_adv_slow_interval_ms: u16,
+    pub ble_adv_fast_timeout_secs: u32,
     pub protocol_macro_chunk_size: usize,
     pub auto_mouse_layer_max_num: usize,
     /// Rynk RX/TX buffer size (bytes).
@@ -175,6 +184,9 @@ impl crate::KeyboardTomlConfig {
             event.subs += 1;
         }
 
+        let (ble_adv_fast_interval_ms, ble_adv_slow_interval_ms, ble_adv_fast_timeout_secs) =
+            resolve_advertising_schedule(self.ble.as_ref())?;
+
         // Only validate passkey settings when the build will emit passkey constants.
         let passkey = if active_features.contains(&"passkey_entry") {
             self.ble.as_ref().map(resolve_passkey_enabled).transpose()?
@@ -254,6 +266,9 @@ impl crate::KeyboardTomlConfig {
             ble_profiles_num: rmk.ble_profiles_num,
             split_central_sleep_timeout_seconds: rmk.split_central_sleep_timeout_seconds,
             ble_adv_tx_power_dbm: self.ble.as_ref().and_then(|ble| ble.default_tx_power).unwrap_or(8),
+            ble_adv_fast_interval_ms,
+            ble_adv_slow_interval_ms,
+            ble_adv_fast_timeout_secs,
             protocol_macro_chunk_size: rmk.protocol_macro_chunk_size,
             auto_mouse_layer_max_num,
             rynk_buffer_size: rmk.rynk_buffer_size,
@@ -306,6 +321,34 @@ fn apply_feature_subscriber_bumps(events: &mut [EventChannel], active_features: 
     }
 }
 
+fn resolve_advertising_schedule(ble: Option<&crate::BleConfig>) -> Result<(u16, u16, u32), String> {
+    let fast = ble
+        .and_then(|b| b.advertising_fast_interval_ms)
+        .unwrap_or(DEFAULT_ADVERTISING_FAST_INTERVAL_MS);
+    let slow = ble
+        .and_then(|b| b.advertising_slow_interval_ms)
+        .unwrap_or(DEFAULT_ADVERTISING_SLOW_INTERVAL_MS);
+    let timeout = ble
+        .and_then(|b| b.advertising_fast_timeout_secs)
+        .unwrap_or(DEFAULT_ADVERTISING_FAST_TIMEOUT_SECS);
+    for (name, value) in [
+        ("advertising_fast_interval_ms", fast),
+        ("advertising_slow_interval_ms", slow),
+    ] {
+        if !(MIN_ADVERTISING_INTERVAL_MS..=MAX_ADVERTISING_INTERVAL_MS).contains(&value) {
+            return Err(format!(
+                "keyboard.toml: [ble.{name}] must be between {MIN_ADVERTISING_INTERVAL_MS} and {MAX_ADVERTISING_INTERVAL_MS} ms, got {value}"
+            ));
+        }
+    }
+    if fast > slow {
+        return Err(format!(
+            "keyboard.toml: [ble.advertising_fast_interval_ms] ({fast}) must not exceed [ble.advertising_slow_interval_ms] ({slow})"
+        ));
+    }
+    Ok((fast, slow, timeout))
+}
+
 fn resolve_passkey_enabled(ble: &crate::BleConfig) -> Result<Passkey, String> {
     let enabled = ble.passkey_entry.unwrap_or(false);
     let timeout_secs = ble.passkey_entry_timeout.unwrap_or(DEFAULT_PASSKEY_ENTRY_TIMEOUT_SECS);
@@ -320,7 +363,10 @@ fn resolve_passkey_enabled(ble: &crate::BleConfig) -> Result<Passkey, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{BuildConstants, resolve_passkey_enabled, validate_u8_capability, validate_u16_capability};
+    use super::{
+        BuildConstants, resolve_advertising_schedule, resolve_passkey_enabled, validate_u8_capability,
+        validate_u16_capability,
+    };
     use crate::{
         BleConfig, DEFAULT_PASSKEY_ENTRY_TIMEOUT_SECS, KeyboardTomlConfig, MIN_PASSKEY_ENTRY_TIMEOUT_SECS,
         SplitBoardConfig, SplitConfig,
@@ -666,5 +712,34 @@ mod tests {
             validate_u16_capability("macro_space_size", 65536),
             Err("macro_space_size (65536) exceeds the u16 host capability field (max 65535)".to_string())
         );
+    }
+
+    #[test]
+    fn advertising_schedule_defaults_and_bounds() {
+        assert_eq!(resolve_advertising_schedule(None).unwrap(), (30, 200, 5));
+        let ble = BleConfig {
+            advertising_fast_interval_ms: Some(250),
+            advertising_slow_interval_ms: Some(200),
+            ..Default::default()
+        };
+        assert!(
+            resolve_advertising_schedule(Some(&ble))
+                .unwrap_err()
+                .contains("must not exceed")
+        );
+        let ble = BleConfig {
+            advertising_slow_interval_ms: Some(10),
+            ..Default::default()
+        };
+        assert!(
+            resolve_advertising_schedule(Some(&ble))
+                .unwrap_err()
+                .contains("between 20 and 10240")
+        );
+        let ble = BleConfig {
+            advertising_fast_timeout_secs: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(resolve_advertising_schedule(Some(&ble)).unwrap(), (30, 200, 0));
     }
 }

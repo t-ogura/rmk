@@ -92,12 +92,31 @@ impl Adv<'_> {
         }
     }
 
-    /// A host link can afford a slow interval and gains from 2M; every other
-    /// peer is RMK's own hardware, where reaching it fast matters more.
-    fn params(&self) -> AdvertisementParameters {
-        let (phy, interval) = match self {
-            Self::Host { .. } => (PhyKind::Le2M, Duration::from_millis(200)),
-            _ => (PhyKind::Le1M, Duration::from_millis(50)),
+    /// The host schedule comes from `[ble]` (`advertising_fast_interval_ms`
+    /// for the first `advertising_fast_timeout_secs`, then
+    /// `advertising_slow_interval_ms`): a scanning host finds a 30 ms
+    /// advertiser within a second or two, and once the burst is over the
+    /// slow interval keeps an unattended keyboard cheap. Every other peer is
+    /// RMK's own hardware, always reached fast.
+    fn schedule(&self) -> Schedule {
+        match self {
+            Self::Host { .. } => Schedule {
+                fast: Duration::from_millis(crate::BLE_ADV_FAST_INTERVAL_MS as u64),
+                fast_for: Duration::from_secs(crate::BLE_ADV_FAST_TIMEOUT_SECS as u64),
+                slow: Duration::from_millis(crate::BLE_ADV_SLOW_INTERVAL_MS as u64),
+            },
+            _ => Schedule {
+                fast: Duration::from_millis(50),
+                fast_for: Duration::MAX,
+                slow: Duration::from_millis(50),
+            },
+        }
+    }
+
+    fn params(&self, interval: Duration) -> AdvertisementParameters {
+        let phy = match self {
+            Self::Host { .. } => PhyKind::Le2M,
+            _ => PhyKind::Le1M,
         };
         AdvertisementParameters {
             primary_phy: phy,
@@ -108,6 +127,13 @@ impl Adv<'_> {
             ..Default::default()
         }
     }
+}
+
+/// An advertising interval for the first `fast_for` of an attempt, then another.
+struct Schedule {
+    fast: Duration,
+    fast_for: Duration,
+    slow: Duration,
 }
 
 /// The advertising power, as configured by `[ble] default_tx_power` (the
@@ -146,15 +172,36 @@ fn adv_tx_power() -> TxPower {
 }
 
 /// Broadcast `adv` and hand back the connection a central makes on it, or
-/// [`Error::Timeout`] if none does within `timeout`.
+/// [`Error::Timeout`] if none does within `timeout`. Runs the advertisement's
+/// fast window first, then the slow interval for what is left of `timeout`.
 pub(crate) async fn advertise<'a, 'b, C: Controller, const ATT: usize, const CONN: usize>(
     peripheral: &mut Peripheral<'a, C, DefaultPacketPool>,
     server: &'b AttributeServer<'_, NoopRawMutex, DefaultPacketPool, ATT, CONN>,
     adv: Adv<'_>,
     timeout: Duration,
 ) -> Result<GattConnection<'a, 'b, DefaultPacketPool>, BleHostError<C::Error>> {
+    let schedule = adv.schedule();
+    let fast_for = schedule.fast_for.min(timeout);
+    if fast_for > Duration::MIN {
+        match advertise_at(peripheral, server, adv, schedule.fast, fast_for).await {
+            Err(BleHostError::BleHost(Error::Timeout)) if fast_for < timeout => {}
+            other => return other,
+        }
+    }
+    advertise_at(peripheral, server, adv, schedule.slow, timeout - fast_for).await
+}
+
+async fn advertise_at<'a, 'b, C: Controller, const ATT: usize, const CONN: usize>(
+    peripheral: &mut Peripheral<'a, C, DefaultPacketPool>,
+    server: &'b AttributeServer<'_, NoopRawMutex, DefaultPacketPool, ATT, CONN>,
+    adv: Adv<'_>,
+    interval: Duration,
+    timeout: Duration,
+) -> Result<GattConnection<'a, 'b, DefaultPacketPool>, BleHostError<C::Error>> {
     let mut buf = [0; 31];
-    let advertiser = peripheral.advertise(&adv.params(), adv.build(&mut buf)?).await?;
+    let advertiser = peripheral
+        .advertise(&adv.params(interval), adv.build(&mut buf)?)
+        .await?;
     let conn = with_timeout(timeout, advertiser.accept())
         .await
         .map_err(|_| Error::Timeout)??;

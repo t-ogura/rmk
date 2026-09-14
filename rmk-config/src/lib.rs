@@ -701,7 +701,26 @@ pub struct BleConfig {
     pub use_2m_phy: Option<bool>,
     pub passkey_entry: Option<bool>,
     pub passkey_entry_timeout: Option<u32>,
+    /// Advertising interval to the host, in milliseconds, for the first
+    /// `advertising_fast_timeout_secs` of every advertising attempt. Default 30.
+    pub advertising_fast_interval_ms: Option<u16>,
+    /// Advertising interval to the host after the fast window, in
+    /// milliseconds. Default 200.
+    pub advertising_slow_interval_ms: Option<u16>,
+    /// Length of the fast window in seconds; 0 advertises at the slow interval
+    /// only. Default 5.
+    pub advertising_fast_timeout_secs: Option<u32>,
 }
+
+/// Defaults for the host advertising schedule: a short burst at 30 ms so a
+/// scanning host finds the keyboard within a second or two of boot, disconnect
+/// or a profile switch, then 200 ms for the rest of the attempt.
+pub const DEFAULT_ADVERTISING_FAST_INTERVAL_MS: u16 = 30;
+pub const DEFAULT_ADVERTISING_SLOW_INTERVAL_MS: u16 = 200;
+pub const DEFAULT_ADVERTISING_FAST_TIMEOUT_SECS: u32 = 5;
+/// The advertising interval range the HCI accepts (0x0020..=0x4000 x 0.625 ms).
+pub const MIN_ADVERTISING_INTERVAL_MS: u16 = 20;
+pub const MAX_ADVERTISING_INTERVAL_MS: u16 = 10240;
 
 /// Default passkey entry timeout in seconds.
 pub const DEFAULT_PASSKEY_ENTRY_TIMEOUT_SECS: u32 = 120;

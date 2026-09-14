@@ -367,6 +367,14 @@ adc_divider_total = 2806
 default_tx_power = 0
 # Whether to enable 2M PHY, defaults to true. nRF52 only, ignored on other chips
 use_2m_phy = true
+# Host advertising schedule. Every advertising attempt (boot, disconnect, profile
+# switch, waking from the advertising timeout) starts at the fast interval for
+# advertising_fast_timeout_secs, then drops to the slow interval. A scanning host
+# finds a 30 ms advertiser within a second or two; 200 ms keeps an unattended
+# keyboard cheap. 20-10240 ms, fast <= slow; a timeout of 0 uses the slow interval only.
+advertising_fast_interval_ms = 30
+advertising_slow_interval_ms = 200
+advertising_fast_timeout_secs = 5
 # Enable passkey entry during BLE pairing, defaults to false
 passkey_entry = false
 # Timeout in seconds for passkey entry, defaults to 120, minimum 30
