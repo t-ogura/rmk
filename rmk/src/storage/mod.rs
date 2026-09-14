@@ -759,8 +759,9 @@ impl<F: AsyncNorFlash, const ROW: usize, const COL: usize, const NUM_LAYER: usiz
                     update_storage_field!(&mut self.flash, &mut self.buffer, LayoutConfig, layout_option)
                 }
                 FlashOperationMessage::Reset => {
-                    let _ = self.flash.erase_all().await;
-                    reboot_keyboard_for(crate::boot::RebootReason::Requested)
+                    let result = self.flash.erase_all().await;
+                    reboot_keyboard_for(crate::boot::RebootReason::Requested);
+                    result
                 }
                 FlashOperationMessage::ResetLayout => {
                     info!("Ignoring ResetLayout at runtime (handled at startup via clear_layout).");

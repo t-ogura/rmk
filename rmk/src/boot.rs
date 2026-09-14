@@ -38,12 +38,10 @@ pub fn jump_to_bootloader() {
 
 /// Why the firmware is rebooting itself.
 ///
-/// On nRF the code is left in `POWER.GPREGRET2` (as `0xA0 | code`) before the
-/// reset. That register survives a soft reset and is cleared by a power-on,
-/// brown-out, pin or watchdog reset, so the next boot can read it first thing
-/// and tell "we rebooted ourselves, and from where" apart from every other
-/// way a board can come up -- a soft reset otherwise looks like nothing at all
-/// from the outside: no USB, no log, and any log buffer is gone with the RAM.
+/// On nRF the code is written to `POWER.GPREGRET2` as `0xA0 | code` before the
+/// reset. The register survives a soft reset but not a power-on, brown-out, pin
+/// or watchdog reset, so the next boot can read it to tell a self-reboot apart
+/// from those.
 #[derive(Clone, Copy)]
 #[repr(u8)]
 pub enum RebootReason {
@@ -57,17 +55,17 @@ pub enum RebootReason {
     Requested = 4,
 }
 
-pub(crate) fn reboot_keyboard_for(reason: RebootReason) -> ! {
+pub(crate) fn reboot_keyboard_for(reason: RebootReason) {
     #[cfg(feature = "_nrf_ble")]
     embassy_nrf::pac::POWER
         .gpregret2()
         .write_value(embassy_nrf::pac::power::regs::Gpregret2((0xA0 | reason as u8) as u32));
     #[cfg(not(feature = "_nrf_ble"))]
     let _ = reason;
-    reboot_keyboard()
+    reboot_keyboard();
 }
 
-pub(crate) fn reboot_keyboard() -> ! {
+pub(crate) fn reboot_keyboard() {
     warn!("Rebooting keyboard!");
     // For cortex-m:
     #[cfg(all(
@@ -79,7 +77,4 @@ pub(crate) fn reboot_keyboard() -> ! {
 
     #[cfg(feature = "_esp_ble")]
     esp_hal::system::software_reset();
-
-    #[allow(unreachable_code)]
-    loop {}
 }
