@@ -296,7 +296,6 @@ fn exemplars() -> Exemplars {
         deactivate_on_key: true,
         extra_mouse_keys: [KeyCode::Hid(HidKeyCode::LCtrl)].into_iter().collect(),
         reset_timeout_on_key: false,
-        exclude_layers: 0b1000,
     };
     let auto_mouse = AutoMouseLayerConfigState {
         capacity: 4,

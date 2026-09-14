@@ -29,23 +29,6 @@ pub struct AutoMouseLayerConfig {
     #[cfg_attr(feature = "wasm", tsify(type = "KeyCode[]"))]
     pub extra_mouse_keys: AutoMouseLayerExtraKeys,
     pub reset_timeout_on_key: bool,
-    /// Layers that suppress this entry, as a bitmask (bit `n` = layer `n`):
-    /// while any of them is active, motion does not activate `target_layer`.
-    /// For layers that already give the pointing device a job of their own,
-    /// such as a scroll layer.
-    pub exclude_layers: u32,
-}
-
-impl AutoMouseLayerConfig {
-    /// Whether `layer` is one of [`Self::exclude_layers`].
-    pub const fn excludes_layer(&self, layer: u8) -> bool {
-        layer < 32 && self.exclude_layers & (1 << layer) != 0
-    }
-
-    /// The bitmask for a list of excluded layers; layers past 31 are dropped.
-    pub fn exclude_layers_mask(layers: &[u8]) -> u32 {
-        layers.iter().filter(|&&l| l < 32).fold(0, |m, &l| m | (1 << l))
-    }
 }
 
 #[cfg(not(feature = "host"))]
@@ -56,6 +39,5 @@ impl MaxSize for AutoMouseLayerConfig {
         + u16::POSTCARD_MAX_SIZE
         + bool::POSTCARD_MAX_SIZE
         + crate::heapless_vec_max_size::<KeyCode, AUTO_MOUSE_LAYER_EXTRA_KEY_MAX_NUM>()
-        + bool::POSTCARD_MAX_SIZE
-        + u32::POSTCARD_MAX_SIZE;
+        + bool::POSTCARD_MAX_SIZE;
 }

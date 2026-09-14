@@ -549,12 +549,25 @@ impl<'a> KeyMap<'a> {
                     deactivate_on_key: config.deactivate_on_key,
                     extra_mouse_keys,
                     reset_timeout_on_key: config.reset_timeout_on_key,
-                    exclude_layers: rmk_types::auto_mouse::AutoMouseLayerConfig::exclude_layers_mask(
-                        config.exclude_layers,
-                    ),
                 }
             })
             .collect()
+    }
+
+    /// The layers `keyboard.toml` excludes for the auto mouse entry aimed at
+    /// `target_layer` from `device_id`, as a bitmask (bit `n` = layer `n`).
+    /// Runtime tables carry no exclusions of their own, so an entry that
+    /// matches a compiled one inherits its list and any other has none.
+    pub(crate) fn auto_mouse_layer_exclusions(&self, device_id: Option<u8>, target_layer: u8) -> u32 {
+        let inner = self.inner.borrow();
+        inner
+            .behavior
+            .auto_mouse_layer
+            .iter()
+            .filter(|c| c.device_id == device_id && c.target_layer == target_layer)
+            .flat_map(|c| c.exclude_layers.iter().copied())
+            .filter(|&l| l < 32)
+            .fold(0, |m, l| m | (1 << l))
     }
 
     pub(crate) fn set_auto_mouse_layer_configs(

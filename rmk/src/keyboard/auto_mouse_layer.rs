@@ -81,6 +81,7 @@ impl<'a, 'k> AutoMouseLayerRunner<'a, 'k> {
             // a misconfigured Rust-API caller bypassing AutoMouseLayerConfig::new.
             let mut config = EntryConfig::from(config);
             config.threshold = config.threshold.max(1);
+            config.exclude_layers = keymap.auto_mouse_layer_exclusions(config.device_id, config.target_layer);
             any_action_event_configured |= config.deactivate_on_key || config.reset_timeout_on_key;
             let device_id = config.device_id;
             if entries
@@ -111,7 +112,7 @@ impl<'a, 'k> AutoMouseLayerRunner<'a, 'k> {
         // A layer that already drives the pointing device -- a scroll layer, say
         // -- would otherwise have this layer stacked on top of it the moment the
         // user moves, silently replacing its keymap.
-        if self.excluded_layer_active(idx) {
+        if self.excluded_layer_active(idx).await {
             return;
         }
         let target_layer = self.entries[idx].config.target_layer;
@@ -131,16 +132,15 @@ impl<'a, 'k> AutoMouseLayerRunner<'a, 'k> {
         // aside now rather than at the timeout: the user reached for a layer
         // that wants the pointing device, and waiting out `timeout` would leave
         // them with the wrong keymap and the wrong pointing mode meanwhile.
-        let keymap = self.keymap;
-        for entry in self.entries.iter_mut() {
-            if entry.self_activated
-                && (0..32u8).any(|layer| entry.config.excludes_layer(layer) && keymap.is_layer_active(layer))
-            {
-                keymap.deactivate_layer_if_active(entry.config.target_layer);
+        for idx in 0..self.entries.len() {
+            if self.entries[idx].self_activated && self.excluded_layer_active(idx).await {
+                self.keymap
+                    .deactivate_layer_if_active(self.entries[idx].config.target_layer);
             }
         }
 
         // Layer turned off externally (MO/TG key etc.) — release our hold.
+        let keymap = self.keymap;
         for entry in self.entries.iter_mut() {
             if entry.self_activated && !keymap.is_layer_active(entry.config.target_layer) {
                 entry.self_activated = false;
@@ -207,7 +207,9 @@ struct EntryConfig {
     deactivate_on_key: bool,
     extra_mouse_keys: heapless::Vec<KeyCode, { rmk_types::auto_mouse::AUTO_MOUSE_LAYER_EXTRA_KEY_MAX_NUM }>,
     reset_timeout_on_key: bool,
-    /// Bit `n` = layer `n`; see `AutoMouseLayerConfig::exclude_layers`.
+    /// Layers that suppress this entry, bit `n` = layer `n`: while any of
+    /// them is active, motion does not activate `target_layer`. From
+    /// `keyboard.toml`'s `exclude_layers`; the runtime table carries none.
     exclude_layers: u32,
 }
 
@@ -228,7 +230,7 @@ impl From<rmk_types::auto_mouse::AutoMouseLayerConfig> for EntryConfig {
             deactivate_on_key: config.deactivate_on_key,
             extra_mouse_keys,
             reset_timeout_on_key: config.reset_timeout_on_key,
-            exclude_layers: config.exclude_layers,
+            exclude_layers: 0,
         }
     }
 }
@@ -242,9 +244,28 @@ enum PointingOutcome {
 
 impl AutoMouseLayerRunner<'_, '_> {
     /// Whether one of entry `idx`'s excluded layers is active right now.
-    fn excluded_layer_active(&self, idx: usize) -> bool {
+    ///
+    /// Two sources: the entry's own list from `keyboard.toml`, and -- with a
+    /// host-editable pointing configuration -- every layer whose override
+    /// gives this entry's device something other than the cursor to do. A
+    /// scroll layer set up from the host then keeps the auto mouse layer
+    /// off it without anyone having to say so twice.
+    async fn excluded_layer_active(&self, idx: usize) -> bool {
         let config = &self.entries[idx].config;
-        (0..32u8).any(|layer| config.excludes_layer(layer) && self.keymap.is_layer_active(layer))
+        if (0..32u8).any(|layer| config.excludes_layer(layer) && self.keymap.is_layer_active(layer)) {
+            return true;
+        }
+        #[cfg(feature = "rynk")]
+        {
+            let pointing = crate::input_device::pointing_config::get().await;
+            pointing.overrides().iter().any(|o| {
+                config.device_id.is_none_or(|id| id == o.device_id)
+                    && !matches!(o.mode, rmk_types::pointing::PointingMode::Cursor(_))
+                    && self.keymap.is_layer_active(o.layer)
+            })
+        }
+        #[cfg(not(feature = "rynk"))]
+        false
     }
 
     fn deadline(&self) -> Option<Instant> {
@@ -1369,6 +1390,7 @@ mod runtime_configuration_tests {
                         value: 0,
                     },
                 ],
+                buttons: 0,
             });
             assert!(futures::poll!(task.as_mut()).is_pending());
             assert!(

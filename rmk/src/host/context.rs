@@ -2,6 +2,7 @@
 
 use embassy_time::Duration;
 use rmk_types::action::{EncoderAction, KeyAction};
+#[cfg(feature = "rynk")]
 use rmk_types::auto_mouse::AutoMouseLayerConfig;
 #[cfg(feature = "_ble")]
 use rmk_types::battery::BatteryStatus;
@@ -20,7 +21,9 @@ use rmk_types::protocol::rynk::{
 
 #[cfg(feature = "rynk")]
 use crate::config::OneShotModifiersConfig;
-use crate::event::{AutoMouseLayerConfigChangeEvent, KeyboardEventPos, publish_event};
+use crate::event::KeyboardEventPos;
+#[cfg(feature = "rynk")]
+use crate::event::{AutoMouseLayerConfigChangeEvent, publish_event};
 use crate::keyboard::combo::Combo;
 use crate::keymap::KeyMap;
 #[cfg(feature = "storage")]
@@ -429,12 +432,14 @@ impl<'a> KeyboardContext<'a> {
         true
     }
 
+    #[cfg(feature = "rynk")]
     pub fn auto_mouse_layer_configs(&self) -> AutoMouseLayerConfigs {
         self.keymap.auto_mouse_layer_configs().into_iter().collect()
     }
 
     /// Atomically replace the auto mouse layer table after validating every
     /// entry against this firmware's compiled resources.
+    #[cfg(feature = "rynk")]
     pub async fn set_auto_mouse_layer_configs(&self, configs: AutoMouseLayerConfigs) -> bool {
         if configs.len() > crate::AUTO_MOUSE_LAYER_MAX_NUM {
             return false;

@@ -8,7 +8,9 @@ use embedded_storage_async::nor_flash::NorFlash as AsyncNorFlash;
 use postcard::experimental::max_size::MaxSize;
 use rmk_types::auto_mouse::AutoMouseLayerConfig as RuntimeAutoMouseLayerConfig;
 use rmk_types::connection::ConnectionType;
-use rmk_types::morse::{MorseProfile, MorseProfileName};
+use rmk_types::morse::MorseProfile;
+#[cfg(feature = "host")]
+use rmk_types::morse::MorseProfileName;
 #[cfg(feature = "rynk")]
 use rmk_types::protocol::rynk::{BehaviorOptions, PointingConfig};
 use sequential_storage::Error as SSError;
@@ -441,7 +443,6 @@ fn auto_mouse_layer_configs(
             deactivate_on_key: config.deactivate_on_key,
             extra_mouse_keys: config.extra_mouse_keys.iter().copied().collect(),
             reset_timeout_on_key: config.reset_timeout_on_key,
-            exclude_layers: RuntimeAutoMouseLayerConfig::exclude_layers_mask(config.exclude_layers),
         })
         .collect()
 }
@@ -785,28 +786,31 @@ impl<F: AsyncNorFlash, const ROW: usize, const COL: usize, const NUM_LAYER: usiz
             behavior_config.tap.tap_capslock_interval = c.tap_capslock_interval;
         }
 
-        let read_data = self
-            .flash
-            .fetch_item(&mut self.buffer, &StorageKey::BehaviorOptions)
-            .await
-            .map_err(|e| print_storage_error::<F>(e))?;
+        #[cfg(feature = "host")]
+        {
+            let read_data = self
+                .flash
+                .fetch_item(&mut self.buffer, &StorageKey::BehaviorOptions)
+                .await
+                .map_err(|e| print_storage_error::<F>(e))?;
 
-        if let Some(StorageData::BehaviorOptions(options)) = read_data {
-            behavior_config.tri_layer = options.tri_layer;
-            behavior_config.combo.prior_idle_time =
-                options.combo_prior_idle_ms.map(|ms| Duration::from_millis(ms as u64));
-            behavior_config.one_shot_modifiers.activate_on_keypress = options.oneshot_activate_on_keypress;
-            behavior_config.one_shot_modifiers.quick_release = options.oneshot_quick_release;
-            behavior_config.morse.enable_flow_tap = options.morse_enable_flow_tap;
-        }
+            if let Some(StorageData::BehaviorOptions(options)) = read_data {
+                behavior_config.tri_layer = options.tri_layer;
+                behavior_config.combo.prior_idle_time =
+                    options.combo_prior_idle_ms.map(|ms| Duration::from_millis(ms as u64));
+                behavior_config.one_shot_modifiers.activate_on_keypress = options.oneshot_activate_on_keypress;
+                behavior_config.one_shot_modifiers.quick_release = options.oneshot_quick_release;
+                behavior_config.morse.enable_flow_tap = options.morse_enable_flow_tap;
+            }
 
-        let read_data = self
-            .flash
-            .fetch_item(&mut self.buffer, &StorageKey::AutoMouseLayerConfigs)
-            .await
-            .map_err(|e| print_storage_error::<F>(e))?;
-        if let Some(StorageData::AutoMouseLayerConfigs(configs)) = read_data {
-            behavior_config.runtime_auto_mouse_layer = Some(configs);
+            let read_data = self
+                .flash
+                .fetch_item(&mut self.buffer, &StorageKey::AutoMouseLayerConfigs)
+                .await
+                .map_err(|e| print_storage_error::<F>(e))?;
+            if let Some(StorageData::AutoMouseLayerConfigs(configs)) = read_data {
+                behavior_config.runtime_auto_mouse_layer = Some(configs);
+            }
         }
 
         Ok(())
